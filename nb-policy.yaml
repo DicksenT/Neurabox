@@ -1,0 +1,15 @@
+version: "1.0"
+name: "frontend-fix"
+image: "node:20-alpine"
+
+# Only these paths exist inside the AI's world
+mounts:
+  - source: "./src/components"
+    target: "/workspace/src/components"
+    mode: "rw" # Read-Write
+  - source: "./package.json"
+    target: "/workspace/package.json"
+    mode: "ro" # Read-Only (Safety First!)
+
+# Hard gates the AI must pass before the code is "trusted"
+checks:
