@@ -3,9 +3,10 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
-	"os/exec"
-	"runtime"
+	"path/filepath"
+	"strings"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
@@ -19,11 +20,20 @@ type Manager struct{
 }
 
 func NewManager()(*Manager, error){
-	os.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
-	cli, err := client.New(client.FromEnv)
+	cli, err := client.New(
+	client.FromEnv,
+	client.WithHost("npipe:////./pipe/docker_engine"), // Specifically for Windows, 
+	)
 	if(err!=nil){
 		return nil, err
 	}
+	defer cli.Close()
+	_, err = cli.Ping(context.Background(), client.PingOptions{})
+    if err != nil {
+        fmt.Printf("❌ Docker is not responding. Is Docker Desktop running?\n")
+        os.Exit(1)
+    }
+    fmt.Println("✅ Connected!")
 	return &Manager{Cli:cli}, err
 }
 
@@ -33,6 +43,7 @@ func (m *Manager) CreateSandbox(ctx context.Context, imageName string, mounts []
 			Image: imageName,
 			Tty: true,
 			NetworkDisabled: true,
+			User: "root",
 		},
 		HostConfig: &container.HostConfig{
 			ExtraHosts: []string{"host.docker.internal:host-gateway"},
@@ -54,11 +65,11 @@ func (m *Manager) ExecInSandbox(ctx context.Context, id string, command []string
 	execConfig := client.ExecCreateOptions{
 		Cmd:	command,
 		AttachStdout: true,
-		AttachStdin: true,
+		AttachStdin: false,
+		AttachStderr: true,
 		TTY: false,
+		WorkingDir: "/workspace",
 	}
-	commandString := fmt.Sprintf("%v", command)
-	m.AuditLog(commandString)
 	execID, err := m.Cli.ExecCreate(ctx, id, execConfig)
 	if(err!=nil){
 		return err
@@ -74,26 +85,95 @@ func (m *Manager) ExecInSandbox(ctx context.Context, id string, command []string
 	if(err!=nil){
 		return err
 	}
-	inspect, err := m.Cli.ExecInspect(ctx, execID.ID, client.ExecInspectOptions{})
-	if(err!=nil){
-		return err
-	}
-	if inspect.ExitCode !=0{
-		return fmt.Errorf("Command failed with exit code %d", inspect.ExitCode)
+	for{
+		inspect, err := m.Cli.ExecInspect(ctx, execID.ID, client.ExecInspectOptions{})
+		if(err!=nil){
+			return err
+		}
+		if !inspect.Running{
+			if inspect.ExitCode !=0{
+				return fmt.Errorf("Command failed with exit code %d", inspect.ExitCode)
+			}
+			break
+		}
+	
 	}
 	return nil
 }
-
 func (m *Manager) ExportChanges(shadowDir string, projectDir string) error {
+    sDir, _ := filepath.Abs(shadowDir)
+    pDir, _ := filepath.Abs(projectDir)
 
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		// /E = copies directories and subdirectories, including empty ones.
-		// /Y = suppresses prompting to confirm you want to overwrite.
-		cmd = exec.Command("xcopy", shadowDir, projectDir, "/E", "/Y", "/I")
-	} else {
-		cmd = exec.Command("cp", "-r", shadowDir+"/.", projectDir)
+    return filepath.Walk(sDir, func(path string, info os.FileInfo, err error) error {
+        if err != nil { return nil }
+
+        relPath, _ := filepath.Rel(sDir, path)
+        if relPath == "." { return nil }
+        
+        targetPath := filepath.Join(pDir, relPath)
+
+        // 🛡️ THE "ALIVE" CHECK: Skip the binary and heavy folders
+        name := info.Name()
+        if info.IsDir() {
+            if name == ".git" || name == "node_modules" || strings.HasPrefix(name, "neurabox-") {
+                return filepath.SkipDir
+            }
+            // If MkdirAll fails, log it but don't crash the whole export
+            _ = os.MkdirAll(targetPath, 0755)
+            return nil
+        }
+
+        // 🚀 THE CRITICAL SKIP: Don't try to overwrite the running .exe
+        if strings.HasSuffix(name, ".exe") || name == "audit.log" {
+            // fmt.Printf("⏭️  Skipping locked file: %s\n", name)
+            return nil
+        }
+
+        fmt.Printf("📝 Syncing: %s\n", relPath)
+        
+        // 🧪 WRAP IN ERROR HANDLER: If one file fails, keep going!
+        err = m.copyFile(path, targetPath, info.Mode())
+        if err != nil {
+            fmt.Printf("⚠️  Skipped %s: %v\n", relPath, err)
+        }
+        
+        return nil // Return nil so the Walk continues to the next file
+    })
+}
+
+// Helper to keep the Walk function clean
+func (m *Manager) copyFile(srcPath, dstPath string, mode os.FileMode) error {
+	src, err := os.Open(srcPath)
+	if err != nil { return err }
+	defer src.Close()
+
+	// Create/Truncate destination
+	dst, err := os.OpenFile(dstPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil { return err }
+	defer dst.Close()
+
+	_, err = io.Copy(dst, src)
+	return err
+}
+
+func (m *Manager) DestroySandbox(ctx context.Context) error{
+	// 1. Stop the container (5-second grace period)
+	timeout := 5 
+	fmt.Printf("Stopping container %s...\n", m.ID[:12])
+	if _,err := m.Cli.ContainerStop(ctx, m.ID, client.ContainerStopOptions{
+		Timeout: &timeout,
+	}); err != nil {
+		// We don't return here because we still want to try removing it
+		fmt.Printf("⚠️ Warning: Could not stop container: %v\n", err)
 	}
 
-	return cmd.Run()
+	fmt.Printf("Removing container %s...\n", m.ID[:12])
+	if _,err := m.Cli.ContainerRemove(ctx, m.ID, client.ContainerRemoveOptions{
+		Force: true,
+		RemoveVolumes: true,
+	}); err != nil {
+		return fmt.Errorf("failed to remove container: %w", err)
+	}
+
+	return nil
 }
