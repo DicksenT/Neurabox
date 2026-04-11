@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
@@ -20,10 +21,7 @@ type Manager struct{
 }
 
 func NewManager()(*Manager, error){
-	cli, err := client.New(
-	client.FromEnv,
-	client.WithHost("npipe:////./pipe/docker_engine"), // Specifically for Windows, 
-	)
+	cli, err := client.New(client.FromEnv)
 	if(err!=nil){
 		return nil, err
 	}
@@ -92,7 +90,7 @@ func (m *Manager) ExecInSandbox(ctx context.Context, id string, command []string
 		}
 		if !inspect.Running{
 			if inspect.ExitCode !=0{
-				return fmt.Errorf("Command failed with exit code %d", inspect.ExitCode)
+				return fmt.Errorf("Command failed with exit code %d\n", inspect.ExitCode)
 			}
 			break
 		}
@@ -100,7 +98,8 @@ func (m *Manager) ExecInSandbox(ctx context.Context, id string, command []string
 	}
 	return nil
 }
-func (m *Manager) ExportChanges(shadowDir string, projectDir string) error {
+func (m *Manager) ExportChanges(shadowDir string, projectDir string, blockList []string) error {
+	fmt.Println(blockList)
     sDir, _ := filepath.Abs(shadowDir)
     pDir, _ := filepath.Abs(projectDir)
 
@@ -115,8 +114,9 @@ func (m *Manager) ExportChanges(shadowDir string, projectDir string) error {
         // 🛡️ THE "ALIVE" CHECK: Skip the binary and heavy folders
         name := info.Name()
         if info.IsDir() {
-            if name == ".git" || name == "node_modules" || strings.HasPrefix(name, "neurabox-") {
-                return filepath.SkipDir
+            if slices.Contains(blockList, name) {
+                fmt.Printf("skipping dir")
+				return filepath.SkipDir
             }
             // If MkdirAll fails, log it but don't crash the whole export
             _ = os.MkdirAll(targetPath, 0755)
@@ -124,8 +124,8 @@ func (m *Manager) ExportChanges(shadowDir string, projectDir string) error {
         }
 
         // 🚀 THE CRITICAL SKIP: Don't try to overwrite the running .exe
-        if strings.HasSuffix(name, ".exe") || name == "audit.log" {
-            // fmt.Printf("⏭️  Skipping locked file: %s\n", name)
+        if strings.HasSuffix(name, ".exe") || name == "audit.log" || slices.Contains(blockList, name){
+            fmt.Printf("Skipping locked file: %s\n", name)
             return nil
         }
 

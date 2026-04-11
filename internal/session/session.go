@@ -19,10 +19,16 @@ import (
 
 
 func RunSession(prompt string){
-	cfg, err := policy.Load("nb-policy.yaml")
+	cwd, _ := os.Getwd()
+	policyPath:= filepath.Join(cwd, "nb-policy.yaml")
+	cfg, err := policy.Load(policyPath)
 	if(err!=nil){
 		log.Fatalf("Failed to load policy: %v", err)
 	}
+	absPath, _ := filepath.Abs(policyPath)
+	fmt.Printf("🔍 DEBUG: Actually reading policy from: %s\n", absPath)
+	fmt.Println("debug info")
+	fmt.Printf("Image in memory: %s\n", cfg.Image)
 	projectDir, err := filepath.Abs(".")
 
 	if(err!=nil){
@@ -34,9 +40,6 @@ func RunSession(prompt string){
 		log.Fatal(err)
 	}
 	defer os.RemoveAll(shadowDir)
-	fmt.Println("successfully create temp dir")
-	fmt.Printf("project directory : %s \n shadow dir: %s", projectDir, shadowDir)
-
 	mgr,_ := sandbox.NewManager()
 	//close after end
 	ctx := context.Background()
@@ -50,7 +53,9 @@ func RunSession(prompt string){
 		TestPass: false,
 		Approved: false,
 	}
-	mgr.ExportChanges(projectDir, shadowDir)
+	fmt.Printf("printing block list:")
+	fmt.Println(cfg.Blocks)
+	mgr.ExportChanges(projectDir, shadowDir, cfg.Blocks)
 
 	for i := 0; i < 5; i++ {
     if _, err := os.Stat(filepath.Join(shadowDir, "src")); err == nil {
@@ -59,6 +64,7 @@ func RunSession(prompt string){
     time.Sleep(100 * time.Millisecond)
 }
 
+	//mount
 	var dockerMounts []mount.Mount
 	for _,m := range cfg.Mounts{
 		var sourcePath string
@@ -70,7 +76,7 @@ func RunSession(prompt string){
 
     absSource, _ := filepath.Abs(sourcePath)
 	if _, err := os.Stat(absSource); os.IsNotExist(err) {
-        fmt.Printf("⚠️ Warning: Mount source %s does not exist. Skipping.\n", absSource)
+        fmt.Printf("Warning: Mount source %s does not exist. Skipping.\n", absSource)
         continue 
     }
 		dockerMounts = append(dockerMounts, mount.Mount{
@@ -92,7 +98,7 @@ func RunSession(prompt string){
 
 	// ... after initial sync ...
 	audit.Prompt = prompt
-	audit.Agent = "Gemini"
+	audit.Agent = "DeepSeek"
 	fmt.Println(" AI is thinking...")
 	response, _ := mgr.AskAI(ctx, prompt, shadowDir)
 
@@ -142,11 +148,12 @@ func RunSession(prompt string){
 
 		if(strings.ToLower(confirm) == "y"){
 			audit.Approved = true
-			mgr.ExportChanges(shadowDir, projectDir)
+			mgr.ExportChanges(shadowDir, projectDir, nil)
 			fmt.Println("Project updated")
 		}else{
 			fmt.Println("Export canceled, shadow workspace discarded")
 		}
 	}
 	mgr.AuditLog(&audit)
+	mgr.SendToSupabase(&audit)
 } 

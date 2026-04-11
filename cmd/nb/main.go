@@ -8,24 +8,40 @@ import (
 	"github.com/DicksenT/neurabox/internal/session"
 	// ... your other imports
 )
-const defaultPolicy = `version: "1.0"
-name: "neurabox-default"
-image: "node:20"
-
-# Only these paths exist inside the AI's world
+const defaultPolicy = `
+version: "0.1"
+image: "node:20-alpine"
 mounts:
   - source: "."
     target: "/workspace"
-    mode: "ro" 
-    #modify source below to your working directory/folder like component ,etc...
+    mode: "ro"
   - source: "./src"
     target: "/workspace/src"
     mode: "rw"
-  - source: "./tests"
-    target: "/workspace/tests"
-    mode: "rw"
-# Hard gates the AI must pass before the code is "trusted"
+
+    #files to block
+blocks:
+  - ".env"
+  - "node_modules"
+  - ".git"
+  - "secret.json"
+# The "Audit Gate" Pipeline
 checks:
+  - cname: "structure"
+    command: "[ -d 'src/controllers' ] && [ -d 'src/routes' ]" # Enforces folder structure, please match it with yours
+  
+  - cname: "eslint"
+    command: "npx eslint ." # linting, please match it with your programming language
+
+  #malicious test
+  - cname: "no-internet-leak"
+    command: "curl -m 2 google.com || echo 'Safe: No internet'"
+  
+  - cname: "performance-check"
+    command: "timeout 5s yes > /dev/null || echo 'Safe: CPU limit hit'"
+  
+  - cname: "system modification"
+    command: "touch /usr/bin/virus || echo 'Safe: no files created'"
 `
 
 func main() {

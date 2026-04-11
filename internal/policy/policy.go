@@ -20,6 +20,7 @@ type Config struct{
 	Name	string `yaml:"name"`
 	Image	string `yaml:"image"`
 	Mounts []Mount `yaml:"mounts"`
+	Blocks []string `yaml:"blocks"`
 	Checks []CheckType `yaml:"checks"`
 }
 
