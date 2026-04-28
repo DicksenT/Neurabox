@@ -40,7 +40,7 @@ func RunSession(prompt string){
 		log.Fatal(err)
 	}
 	defer os.RemoveAll(shadowDir)
-	mgr,_ := sandbox.NewManager()
+	mgr := sandbox.NewManager()
 	//close after end
 	ctx := context.Background()
 	defer func() {
@@ -98,9 +98,9 @@ func RunSession(prompt string){
 
 	// ... after initial sync ...
 	audit.Prompt = prompt
-	audit.Agent = "DeepSeek"
+	audit.Agent = cfg.AI.AIName
 	fmt.Println(" AI is thinking...")
-	response, _ := mgr.AskAI(ctx, prompt, shadowDir)
+	response, _ := mgr.AskAI(ctx, prompt, shadowDir, cfg.AI)
 
 	// tell result
 	fmt.Printf("AI Suggestion: %s\n", response)

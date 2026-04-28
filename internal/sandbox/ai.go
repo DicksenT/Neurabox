@@ -7,13 +7,15 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-    "github.com/sashabaranov/go-openai" // Use the OpenAI compatible client
+
+	"github.com/DicksenT/neurabox/internal/policy"
+	"github.com/sashabaranov/go-openai" // Use the OpenAI compatible client
 )
 
-func (m *Manager) AskAI(ctx context.Context, prompt string, shadowDir string) (string, error) {
+func (m *Manager) AskAI(ctx context.Context, prompt string, shadowDir string, provider policy.AIProvider) (string, error) {
     // 1. Configure for DeepSeek
-    config := openai.DefaultConfig("sk-7663d06d3ecf482582b501f9e3ddc1b0") // Replace with your real key
-    config.BaseURL = "https://api.deepseek.com"
+    config := openai.DefaultConfig(provider.Key) // Replace with your real key
+    config.BaseURL = provider.BaseURL
 
     client := openai.NewClientWithConfig(config)
 
@@ -32,7 +34,7 @@ func (m *Manager) AskAI(ctx context.Context, prompt string, shadowDir string) (s
     resp, err := client.CreateChatCompletion(
         ctx,
         openai.ChatCompletionRequest{
-            Model: "deepseek-chat", // Or "deepseek-reasoner" for deep thinking
+            Model: provider.Model, 
             Messages: []openai.ChatCompletionMessage{
                 {
                     Role:    openai.ChatMessageRoleSystem,
@@ -43,12 +45,12 @@ func (m *Manager) AskAI(ctx context.Context, prompt string, shadowDir string) (s
                     Content: prompt,
                 },
             },
-            Temperature: 0.2, // Low temperature for consistent code structure
+            Temperature: 0.2,
         },
     )
 
     if err != nil {
-        return "", fmt.Errorf("DeepSeek API error: %v", err)
+        return "", fmt.Errorf("API error: %v", err)
     }
 
     return resp.Choices[0].Message.Content, nil

@@ -20,10 +20,10 @@ type Manager struct{
 	ID string
 }
 
-func NewManager()(*Manager, error){
+func NewManager()(*Manager){
 	cli, err := client.New(client.FromEnv)
 	if(err!=nil){
-		return nil, err
+		return nil
 	}
 	defer cli.Close()
 	_, err = cli.Ping(context.Background(), client.PingOptions{})
@@ -32,7 +32,7 @@ func NewManager()(*Manager, error){
         os.Exit(1)
     }
     fmt.Println("✅ Connected!")
-	return &Manager{Cli:cli}, err
+	return &Manager{Cli:cli}
 }
 
 func (m *Manager) CreateSandbox(ctx context.Context, imageName string, mounts []mount.Mount) error{

@@ -18,7 +18,12 @@ mounts:
   - source: "./src"
     target: "/workspace/src"
     mode: "rw"
-
+#bring your own key 
+ai:
+    ainame: "" #e.g DeepSeek, OpenAI
+    baseurl: "" #e.g https://api.deepseek.com, https://api.openai.com/v1
+    model: "" #e.g deepseek-chat, gpt-4o
+    key: "" #the api key sk-...
     #files to block
 blocks:
   - ".env"
@@ -30,9 +35,6 @@ checks:
   - cname: "structure"
     command: "[ -d 'src/controllers' ] && [ -d 'src/routes' ]" # Enforces folder structure, please match it with yours
   
-  - cname: "eslint"
-    command: "npx eslint ." # linting, please match it with your programming language
-
   #malicious test
   - cname: "no-internet-leak"
     command: "curl -m 2 google.com || echo 'Safe: No internet'"
