@@ -16,8 +16,6 @@ import (
 	"github.com/moby/moby/api/types/mount"
 )
 
-
-
 func RunSession(prompt string){
 	cwd, _ := os.Getwd()
 	policyPath:= filepath.Join(cwd, "nb-policy.yaml")
@@ -25,12 +23,8 @@ func RunSession(prompt string){
 	if(err!=nil){
 		log.Fatalf("Failed to load policy: %v", err)
 	}
-	absPath, _ := filepath.Abs(policyPath)
-	fmt.Printf("🔍 DEBUG: Actually reading policy from: %s\n", absPath)
-	fmt.Println("debug info")
-	fmt.Printf("Image in memory: %s\n", cfg.Image)
-	projectDir, err := filepath.Abs(".")
 
+	projectDir, err := filepath.Abs(".")
 	if(err!=nil){
 		log.Fatal(err)
 	}
@@ -41,7 +35,6 @@ func RunSession(prompt string){
 	}
 	defer os.RemoveAll(shadowDir)
 	mgr := sandbox.NewManager()
-	//close after end
 	ctx := context.Background()
 	defer func() {
         fmt.Printf("Cleaning up sandbox %s...\n", mgr.ID[:12])
@@ -98,9 +91,9 @@ func RunSession(prompt string){
 
 	// ... after initial sync ...
 	audit.Prompt = prompt
-	audit.Agent = cfg.AI.AIName
 	fmt.Println(" AI is thinking...")
-	response, _ := mgr.AskAI(ctx, prompt, shadowDir, cfg.AI)
+	response, model,_ := mgr.AskAI(ctx, prompt, shadowDir)
+	audit.Agent = model
 
 	// tell result
 	fmt.Printf("AI Suggestion: %s\n", response)
@@ -155,5 +148,4 @@ func RunSession(prompt string){
 		}
 	}
 	mgr.AuditLog(&audit)
-	mgr.SendToSupabase(&audit)
 } 

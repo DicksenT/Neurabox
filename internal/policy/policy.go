@@ -16,18 +16,11 @@ type CheckType struct{
 	Command	string `yaml:"command"`
 }
 
-type AIProvider struct{
-	AIName	string `yaml:"ainame"`
-	BaseURL string `yaml:"baseurl"`
-	Model 	string `yaml:"model"`
-	Key 	string `yaml:"key"`
-}
 
 type Config struct{
 	Name	string `yaml:"name"`
 	Image	string `yaml:"image"`
 	Mounts []Mount `yaml:"mounts"`
-	AI		AIProvider `yaml:"ai"`
 	Blocks []string `yaml:"blocks"`
 	Checks []CheckType `yaml:"checks"`
 }

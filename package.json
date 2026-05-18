@@ -1,0 +1,20 @@
+{
+  "name": "neurabox",
+  "version": "0.1.0",
+  "description": "security airlock for ai-generated code",
+  "repository": "https://github.com/DicksenT/neurabox-v0.1",
+  "bin": {
+    "neurabox": "bin/neurabox"
+  },
+  "scripts": {
+    "postinstall": "go-npm install"
+  },
+  "dependencies": {
+    "go-npm": "^0.1.0"
+  },
+  "goBinary": {
+    "name": "neurabox",
+    "path": "./bin",
+    "url": "https://github.com/DicksenT/neurabox-v0.1/releases/download/v{{version}}/neurabox_{{version}}_{{platform}}_{{arch}}.tar.gz"
+  }
+}

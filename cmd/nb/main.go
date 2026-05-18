@@ -18,12 +18,6 @@ mounts:
   - source: "./src"
     target: "/workspace/src"
     mode: "rw"
-#bring your own key 
-ai:
-    ainame: "" #e.g DeepSeek, OpenAI
-    baseurl: "" #e.g https://api.deepseek.com, https://api.openai.com/v1
-    model: "" #e.g deepseek-chat, gpt-4o
-    key: "" #the api key sk-...
     #files to block
 blocks:
   - ".env"

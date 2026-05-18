@@ -3,38 +3,74 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
-	"github.com/DicksenT/neurabox/internal/policy"
+	"github.com/joho/godotenv"
 	"github.com/sashabaranov/go-openai" // Use the OpenAI compatible client
 )
 
-func (m *Manager) AskAI(ctx context.Context, prompt string, shadowDir string, provider policy.AIProvider) (string, error) {
-    // 1. Configure for DeepSeek
-    config := openai.DefaultConfig(provider.Key) // Replace with your real key
-    config.BaseURL = provider.BaseURL
+func (m *Manager) getWorkspaceFiles(shadowDir string) []string{
+    var fileList []string
+    filepath.WalkDir(shadowDir, func(path string, d os.DirEntry, err error) error{
+        if !d.IsDir(){
+            rel, _ := filepath.Rel(shadowDir, path)
+            fileList = append(fileList, rel)
+        }
+        return nil
+    })
+    return fileList
+}
+
+func (m *Manager) AskAI(ctx context.Context, prompt string, shadowDir string) (string, string, error) {
+    err := godotenv.Load()
+    if(err != nil){
+        log.Fatal("error loading .env files")
+    }
+    workspaceFiles := m.getWorkspaceFiles(shadowDir)
+    key := os.Getenv("API_KEY")
+    baseUrl := os.Getenv("AI_BASE_URL")
+    model := os.Getenv("AI_MODEL")
+    config := openai.DefaultConfig(key) // Replace with your real key
+    config.BaseURL = baseUrl
+
+    re := regexp.MustCompile(`\b[\w\-\./]+\.[a-zA-Z0-9]{2,4}\b`)
+    matches := re.FindAllString(prompt, -1)
+
+    var contextFiles strings.Builder
+    for _, path := range workspaceFiles{
+        if(slices.Contains(matches, filepath.Base(path))){
+            content, _ := os.ReadFile(filepath.Join(shadowDir, path))
+            contextFiles.WriteString(fmt.Sprintf("### FILE: %s\n", path))
+            contextFiles.WriteString("```\n")
+            contextFiles.WriteString(string(content))
+            contextFiles.WriteString("\n```\n\n")
+        }
+    }
 
     client := openai.NewClientWithConfig(config)
 
     // 2. Prepare the System Prompt (Your "Airlock" rules)
     systemPrompt := fmt.Sprintf(`You are a SECURE coding assistant. 
     Your root workspace is: %s. 
+    Content of related files: %s
     RULE: Always provide code in markdown blocks. 
     RULE: The first line of the block MUST be the relative file path.
     RULE: Be straightforward, no chitchat required
     Example: 
     `+"```"+`go src/main.go
     package main...
-    `+"```", shadowDir)
+    `+"```", shadowDir, contextFiles.String())
 
     // 3. Create the Request
     resp, err := client.CreateChatCompletion(
         ctx,
         openai.ChatCompletionRequest{
-            Model: provider.Model, 
+            Model: model, 
             Messages: []openai.ChatCompletionMessage{
                 {
                     Role:    openai.ChatMessageRoleSystem,
@@ -50,10 +86,10 @@ func (m *Manager) AskAI(ctx context.Context, prompt string, shadowDir string, pr
     )
 
     if err != nil {
-        return "", fmt.Errorf("API error: %v", err)
+        return "", "",fmt.Errorf("API error: %v",err)
     }
 
-    return resp.Choices[0].Message.Content, nil
+    return resp.Choices[0].Message.Content, model,nil
 
 }
 
