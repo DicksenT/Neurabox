@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/DicksenT/neurabox/internal/policy"
 	"github.com/DicksenT/neurabox/internal/sandbox"
@@ -23,39 +22,23 @@ func RunSession(prompt string){
 	if(err!=nil){
 		log.Fatalf("Failed to load policy: %v", err)
 	}
-
 	projectDir, err := filepath.Abs(".")
 	if(err!=nil){
 		log.Fatal(err)
 	}
-	//create shadow dir
+	//CREATE A SHADOW DIR AND COPY FILES INTO IT
 	shadowDir, err := os.MkdirTemp("", "neurabox-*")
 	if(err!=nil){
 		log.Fatal(err)
 	}
-	defer os.RemoveAll(shadowDir)
-	mgr := sandbox.NewManager()
+	mgr := sandbox.DockerManager()
 	ctx := context.Background()
 	defer func() {
         fmt.Printf("Cleaning up sandbox %s...\n", mgr.ID[:12])
         mgr.DestroySandbox(ctx) 
         os.RemoveAll(shadowDir) // Delete the temp folder too
     }()
-	audit := Types.AuditEntry{
-		ID: mgr.ID,
-		TestPass: false,
-		Approved: false,
-	}
-	fmt.Printf("printing block list:")
-	fmt.Println(cfg.Blocks)
 	mgr.ExportChanges(projectDir, shadowDir, cfg.Blocks)
-
-	for i := 0; i < 5; i++ {
-    if _, err := os.Stat(filepath.Join(shadowDir, "src")); err == nil {
-        break 
-    }
-    time.Sleep(100 * time.Millisecond)
-}
 
 	//mount
 	var dockerMounts []mount.Mount
@@ -89,17 +72,20 @@ func RunSession(prompt string){
 	fmt.Printf("Sandbox started!, id: %s\n", mgr.ID)
 	fmt.Println("Code now isolated, it cannot see your system or the internet")
 
-	// ... after initial sync ...
-	audit.Prompt = prompt
+	// AI work and show result
 	fmt.Println(" AI is thinking...")
 	response, model,_ := mgr.AskAI(ctx, prompt, shadowDir)
-	audit.Agent = model
-
-	// tell result
 	fmt.Printf("AI Suggestion: %s\n", response)
 	files, err := mgr.ApplyAI(shadowDir, response)
-	audit.Files = files
 
+	audit := Types.AuditEntry{
+		ID: mgr.ID,
+		TestPass: false,
+		Approved: false,
+		Prompt: prompt,
+		Agent: model,
+		Files: files,
+	}
 	// ... run checks ...
 	allPassed := true
 	for _,check := range cfg.Checks{
@@ -112,6 +98,7 @@ func RunSession(prompt string){
 			break
 		}
 	}
+	
 	if allPassed{
 		audit.TestPass = true
 		fmt.Println("\n--- NEURABOX AUDIT GATE ---")
@@ -120,22 +107,12 @@ func RunSession(prompt string){
 		var show string
 		fmt.Scanln(&show)
 		if(strings.ToLower(show) == "y"){
-			cmd := exec.Command("git", 
-				"-c", "core.safecrlf=false", 
-				"--no-pager", 
-				"diff", 
-				"--no-index", 
-				"--stat",           
-				"--compact-summary",  
-				shadowDir, 
-				projectDir,
-			)
+			cmd := exec.Command("git", "--no-pager", "diff", "--no-index", shadowDir, projectDir)
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			cmd.Run()
 		}
 		fmt.Printf("Confirm export to your real project? [y/N]: ")
-		
 		var confirm string
 		fmt.Scanln(&confirm)
 
@@ -147,5 +124,124 @@ func RunSession(prompt string){
 			fmt.Println("Export canceled, shadow workspace discarded")
 		}
 	}
+
 	mgr.AuditLog(&audit)
 } 
+
+func RunProxySession(agentCmd []string) {
+	cwd, _ := os.Getwd()
+	policyPath := filepath.Join(cwd, "nb-policy.yaml")
+	cfg, err := policy.Load(policyPath)
+	if err != nil {
+		log.Fatalf("Failed to load policy: %v", err)
+	}
+
+	projectDir, err := filepath.Abs(".")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// 1. Build an ephemeral sandbox workspace directory
+	shadowDir, err := os.MkdirTemp("", "nb-proxy-*")
+	if err != nil {
+		log.Fatal(err)
+	}
+	mgr := sandbox.DockerManager()
+	ctx := context.Background()
+
+	defer func() {
+		mgr.DestroySandbox(ctx)
+		os.RemoveAll(shadowDir)
+	}()
+
+	// 2. Clone the existing working repository space into the shadow tracking layer
+	mgr.ExportChanges(projectDir, shadowDir, cfg.Blocks)
+
+	// 3. Prepare the mount mapping bindings
+	dockerMounts := []mount.Mount{
+		{
+			Type:     mount.TypeBind,
+			Source:   shadowDir,
+			Target:   "/workspace",
+			ReadOnly: false,
+		},
+		{
+			Type: 	mount.TypeVolume,
+			Source: "neurabox-npm-cache",
+			Target: "/root/.npm",
+
+		},
+		{
+			Type: mount.TypeVolume,
+			Source: "neurabox-global-packages",
+			Target: "/root/.npm-global",
+		},
+		{
+			Type:   mount.TypeVolume,
+			Source: "neurabox-cli-configs",
+			Target: "/root/.config",
+		},
+		{
+			Type:   mount.TypeVolume,
+			Source: "neurabox-gemini-config",
+			Target: "/root/.gemini", // 🚀 Maps the exact hidden folder Gemini targets
+		},
+	}
+
+	// 4. Fire up our network-throttled security box
+	err = mgr.CreateSandbox(ctx, cfg.Image, dockerMounts)
+	if err != nil {
+		log.Fatalf("Failed to start isolation container: %v", err)
+	}
+	for _, pkg := range cfg.Packages{
+		fmt.Println("installing/checking packages...")
+		checkErr := mgr.ExecInSandbox(ctx, mgr.ID, []string{"sh", "-c", pkg})
+		if checkErr != nil{
+			fmt.Printf("Failed to install packages, please make sure package name is correct.\n")
+		}
+	}
+	// 5. Hand over live interaction execution threads directly to the proxy agent
+	err = mgr.RunInteractiveProxy(ctx, mgr.ID, agentCmd)
+	if err != nil {
+		fmt.Printf("Agent runtime session interrupted: %v\n", err)
+	}
+
+	// 6. Run your Guardrail Compliance Policies over the altered state
+	fmt.Println("\nInterception cycle complete. Running post-generation policy validations...")
+	allPassed := true
+	for _, check := range cfg.Checks {
+		fmt.Printf("Running guardrail: %s... ", check.CName)
+		checkErr := mgr.ExecInSandbox(ctx, mgr.ID, []string{"sh", "-c", check.Command})
+		if checkErr != nil {
+			fmt.Printf("FAILED\nReason: Policy violation detected. Outbound block applied.\n")
+			allPassed = false
+			break
+		}
+		fmt.Println("✅")
+	}
+
+	// 7. Secure Verification Interface & Code Merging
+	if allPassed{
+		fmt.Println("\n--- NEURABOX AUDIT GATE ---")
+		fmt.Printf("Guardrails: ALL PASSED\n")
+		fmt.Printf("do you want to see the git Diff? [y/N]: ")
+		var show string
+		fmt.Scanln(&show)
+		if(strings.ToLower(show) == "y"){
+			cmd := exec.Command("git", "--no-pager", "diff", "--no-index", shadowDir, projectDir)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			cmd.Run()
+		}
+		fmt.Printf("Confirm export to your real project? [y/N]: ")
+		var confirm string
+		fmt.Scanln(&confirm)
+
+		if(strings.ToLower(confirm) == "y"){
+			mgr.ExportChanges(shadowDir, projectDir, nil)
+			fmt.Println("Project updated")
+		}else{
+			fmt.Println("Export canceled, shadow workspace discarded")
+		}
+	}
+}

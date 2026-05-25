@@ -23,6 +23,7 @@ type Config struct{
 	Mounts []Mount `yaml:"mounts"`
 	Blocks []string `yaml:"blocks"`
 	Checks []CheckType `yaml:"checks"`
+	Packages []string `yaml:"package"`
 }
 
 func Load(path string) (*Config, error){
