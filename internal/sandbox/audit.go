@@ -8,7 +8,7 @@ import (
 	Types "github.com/DicksenT/neurabox/internal/types"
 )
 
-func (m *Manager) AuditLog(e *Types.AuditEntry) error {
+func AuditLog(e *Types.AuditEntry) error {
 	e.Timestamp = time.Now().Format(time.RFC3339)
 	data, _ := json.Marshal(e)
 	//move to sqlite later
