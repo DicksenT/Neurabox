@@ -110,7 +110,7 @@ func RunSession(prompt string) {
 			fmt.Println("Export canceled, shadow workspace discarded")
 		}
 	}
-	mgr.AuditLog(&audit)
+	sandbox.AuditLog(&audit)
 }
 
 func RunProxySession(agentCmd []string, hardened bool) {
@@ -189,8 +189,15 @@ func RunProxySession(agentCmd []string, hardened bool) {
 	os.Setenv("RTK_DB_PATH", persistentDB)
 
 	sandbox.ExportChanges(projectDir, shadowDir, cfg.Blocks)
+
+	preSnap, snapErr := sandbox.SnapshotDir(shadowDir)
+	if snapErr != nil {
+		log.Printf("Warning: pre-session snapshot failed: %v — file tracking disabled", snapErr)
+	}
+
 	runtime := sandbox.NewPrimitiveEngine()
 	ctx := context.Background()
+
 
 	fmt.Println("Launching isolated shadow workspace view")
 	openCmd := exec.Command("cmd.exe", "/c", "code", shadowDir)
@@ -233,6 +240,21 @@ func RunProxySession(agentCmd []string, hardened bool) {
 		}
 		fmt.Println("✅")
 	}
+	var changedFiles []string
+	if preSnap != nil {
+		if postSnap, err := sandbox.SnapshotDir(shadowDir); err == nil {
+			changedFiles = sandbox.DiffSnapshots(preSnap, postSnap)
+		}
+	}
+
+	audit := Types.AuditEntry{
+		ID:       "proxy-" + filepath.Base(shadowDir), // Unique session trace string
+		TestPass: allPassed,
+		Approved: false,
+		Prompt:   "",            // Tracks exactly what command the user typed for the agent
+		Agent:    "Native Windows Sandbox Proxy",
+		Files:    changedFiles,               // Tracks string slice of every single added/modified file
+	}
 
 	if allPassed {
 		fmt.Println("\n--- NEURABOX AUDIT GATE ---")
@@ -244,13 +266,14 @@ func RunProxySession(agentCmd []string, hardened bool) {
 			cmd.Run()
 		}
 		if promptYN("Confirm export to your real project?") {
-			sandbox.ExportChanges(shadowDir, projectDir, nil)
+			exported,_ := sandbox.ExportChangesTracked(shadowDir, projectDir, nil)
 			fmt.Println("Project updated")
+			printInstallReminder(exported)
 		} else {
 			fmt.Println("Export canceled, shadow workspace discarded")
 		}
 	}
-	
+	sandbox.AuditLog(&audit)
 }
 
 // promptYN prints "[y/N]: " after the question and returns true only for "y"/"Y".
@@ -259,4 +282,20 @@ func promptYN(question string) bool {
 	var answer string
 	fmt.Scanln(&answer)
 	return strings.ToLower(strings.TrimSpace(answer)) == "y"
+}
+
+func printInstallReminder(exported []string) {
+	for _, f := range exported {
+		switch filepath.Base(f) {
+		case "package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml":
+			fmt.Println("\n package manifest changed — run `npm install` (or yarn/pnpm) to apply dependency changes.")
+			return
+		case "go.mod", "go.sum":
+			fmt.Println("\n go.mod changed — run `go mod tidy` to apply dependency changes.")
+			return
+		case "requirements.txt", "Pipfile", "pyproject.toml":
+			fmt.Println("\n Python dependencies changed — run `pip install -r requirements.txt` to apply changes.")
+			return
+		}
+	}
 }
