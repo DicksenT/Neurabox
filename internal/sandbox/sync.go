@@ -7,44 +7,134 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 )
 
+// heavyDirs are always skipped regardless of the policy blocklist.
+// These are directories that are either generated, dependency caches, or
+// version-control internals — copying them into the shadow workspace would
+// be slow and pointless.
+var heavyDirs = []string{
+	"node_modules",
+	".git",
+	"dist",
+	"build",
+	".next",
+	".nuxt",
+	"vendor",       // Go / PHP
+	"__pycache__",
+	".venv",
+	"venv",
+	".mypy_cache",
+	".pytest_cache",
+	"target",       // Rust / Maven
+	".gradle",
+	".idea",
+	".vscode",
+}
+
+// FileSnapshot records the mtime and size of every file in a directory tree.
+// Used to detect which files actually changed after an agent session.
+type FileSnapshot map[string]fileInfo
+
+type fileInfo struct {
+	Size    int64
+	ModTime time.Time
+}
+
+// SnapshotDir walks dir and records mtime+size for every file.
+func SnapshotDir(dir string) (FileSnapshot, error) {
+	snap := make(FileSnapshot)
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(dir, path)
+		snap[rel] = fileInfo{Size: info.Size(), ModTime: info.ModTime()}
+		return nil
+	})
+	return snap, err
+}
+
+// DiffSnapshots compares a before and after snapshot and returns the relative
+// paths of files that were added, modified, or deleted.
+func DiffSnapshots(before, after FileSnapshot) []string {
+	seen := make(map[string]bool)
+	var changed []string
+
+	for rel, afterInfo := range after {
+		seen[rel] = true
+		beforeInfo, existed := before[rel]
+		if !existed {
+			changed = append(changed, rel+" (added)")
+		} else if afterInfo.Size != beforeInfo.Size || afterInfo.ModTime.After(beforeInfo.ModTime) {
+			changed = append(changed, rel+" (modified)")
+		}
+	}
+	for rel := range before {
+		if !seen[rel] {
+			changed = append(changed, rel+" (deleted)")
+		}
+	}
+	return changed
+}
+
+// ExportChanges copies every file from sourceDir to targetDir, skipping:
+//   - directories in blockList (from nb-policy.yaml)
+//   - heavyDirs (node_modules, .git, dist, etc.)
+//   - .exe files and audit.log (locked/irrelevant)
+//   - files that are identical to the target (same size + mtime) — avoids
+//     redundant I/O when syncing a large workspace back to the project
+//
+// It also syncs deletions: files that exist in targetDir but not in sourceDir
+// are removed, so the export is a true mirror rather than just an overlay.
+//
+// Returns the list of relative paths that were actually written or deleted.
 func ExportChanges(sourceDir string, targetDir string, blockList []string) error {
-	fmt.Println(blockList)
+	_, err := exportChanges(sourceDir, targetDir, blockList)
+	return err
+}
+
+// ExportChangesTracked is like ExportChanges but also returns the list of
+// relative paths that were written or deleted. Use this when you need to
+// show the user a summary of what changed.
+func ExportChangesTracked(sourceDir string, targetDir string, blockList []string) ([]string, error) {
+	return exportChanges(sourceDir, targetDir, blockList)
+}
+
+func exportChanges(sourceDir string, targetDir string, blockList []string) ([]string, error) {
 	sDir, _ := filepath.Abs(sourceDir)
 	pDir, _ := filepath.Abs(targetDir)
 
-	/*
-	//ensure
-	err := filepath.WalkDir(targetDir, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
+	var changed []string
 
-		// Get the relative path from the destination root
-		relPath, err := filepath.Rel(targetDir, path)
+	// --- Phase 1: Sync deletions ---
+	// Walk the TARGET and remove anything that no longer exists in the source.
+	// This ensures deleted files don't silently persist in the real project.
+	err := filepath.WalkDir(pDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			return err
+			return nil // target may not exist yet; that's fine
 		}
-
-		// Skip checking the root folder itself
+		relPath, _ := filepath.Rel(pDir, path)
 		if relPath == "." {
 			return nil
 		}
 
-		// Check if this file/folder exists in the target folder
-		correspondingSrcPath := filepath.Join(sourceDir, relPath)
-		if _, err := os.Stat(correspondingSrcPath); os.IsNotExist(err) {
-			// 🚨 File exists in original code, but does NOT exist in shadow workspace!
-			// The agent deliberately deleted it. We must delete it from the destination.
-			fmt.Printf("  Syncing Deletion: Removing %s\n", relPath)
-			
-			// RemoveAll handles both individual files and entire removed directories
-			if err := os.RemoveAll(path); err != nil {
-				return err
+		// Never try to delete heavy dirs from the target — they were never
+		// copied there in the first place.
+		name := d.Name()
+		if d.IsDir() && (slices.Contains(heavyDirs, name) || slices.Contains(blockList, name)) {
+			return filepath.SkipDir
+		}
+
+		srcPath := filepath.Join(sDir, relPath)
+		if _, err := os.Stat(srcPath); os.IsNotExist(err) {
+			fmt.Printf("🗑️  Deleting: %s\n", relPath)
+			if removeErr := os.RemoveAll(path); removeErr != nil {
+				fmt.Printf("⚠️  Could not delete %s: %v\n", relPath, removeErr)
+			} else {
+				changed = append(changed, relPath+" (deleted)")
 			}
-			
-			// If we deleted a directory, tell WalkDir to skip tracking its internal files
 			if d.IsDir() {
 				return filepath.SkipDir
 			}
@@ -52,10 +142,11 @@ func ExportChanges(sourceDir string, targetDir string, blockList []string) error
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("failed to sync file deletions: %v", err)
+		return nil, fmt.Errorf("deletion sync failed: %v", err)
 	}
-*/
-	return filepath.Walk(sDir, func(path string, info os.FileInfo, err error) error {
+
+	// --- Phase 2: Copy new/changed files from source to target ---
+	err = filepath.Walk(sDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -65,42 +156,47 @@ func ExportChanges(sourceDir string, targetDir string, blockList []string) error
 			return nil
 		}
 
-		targetPath := filepath.Join(pDir, relPath)
-
-		//  THE "ALIVE" CHECK: Skip the binary and heavy folders
 		name := info.Name()
+
+		// Skip heavy and blocked directories entirely.
 		if info.IsDir() {
-			if slices.Contains(blockList, name) {
-				fmt.Printf("skipping dir")
+			if slices.Contains(heavyDirs, name) || slices.Contains(blockList, name) {
+				fmt.Printf("⏭️  Skipping dir: %s\n", relPath)
 				return filepath.SkipDir
 			}
-			if name == ".claude" || name == ".aider" || name == ".gemini" || name == ".vscode" {
-		return filepath.SkipDir
-	}
-			// If MkdirAll fails, log it but don't crash the whole export
-			_ = os.MkdirAll(targetPath, 0755)
+			_ = os.MkdirAll(filepath.Join(pDir, relPath), 0755)
 			return nil
 		}
 
-		//  THE CRITICAL SKIP: Don't try to overwrite the running .exe
+		// Skip locked / irrelevant file types.
 		if strings.HasSuffix(name, ".exe") || name == "audit.log" || slices.Contains(blockList, name) {
-			fmt.Printf("Skipping locked file: %s\n", name)
 			return nil
 		}
 
-		fmt.Printf("Syncing: %s\n", relPath)
+		targetPath := filepath.Join(pDir, relPath)
 
-		// 🧪 WRAP IN ERROR HANDLER: If one file fails, keep going!
-		err = copyFile(path, targetPath, info.Mode())
-		if err != nil {
-			fmt.Printf("Skipped %s: %v\n", relPath, err)
+		// Skip the copy if the target already has the same content.
+		// We use size+mtime as a fast proxy — good enough for agent outputs.
+		if targetInfo, err := os.Stat(targetPath); err == nil {
+			if targetInfo.Size() == info.Size() && !info.ModTime().After(targetInfo.ModTime()) {
+				return nil // identical — no I/O needed
+			}
 		}
 
-		return nil // Return nil so the Walk continues to the next file
+		fmt.Printf("📝 Syncing: %s\n", relPath)
+		if copyErr := copyFile(path, targetPath, info.Mode()); copyErr != nil {
+			fmt.Printf("⚠️  Skipped %s: %v\n", relPath, copyErr)
+		} else {
+			changed = append(changed, relPath)
+		}
+
+		return nil
 	})
+
+	return changed, err
 }
 
-// Helper to keep the Walk function clean
+// copyFile copies srcPath to dstPath preserving the given mode.
 func copyFile(srcPath, dstPath string, mode os.FileMode) error {
 	src, err := os.Open(srcPath)
 	if err != nil {
@@ -108,7 +204,6 @@ func copyFile(srcPath, dstPath string, mode os.FileMode) error {
 	}
 	defer src.Close()
 
-	// Create/Truncate destination
 	dst, err := os.OpenFile(dstPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, mode)
 	if err != nil {
 		return err
