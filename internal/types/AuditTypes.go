@@ -5,6 +5,7 @@ type AuditEntry struct{
 	User string
 	ID string
 	Agent string
+	BlockList []string
 	Files []string
 	Approved bool
 	TestPass bool
