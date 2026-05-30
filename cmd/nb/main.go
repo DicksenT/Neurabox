@@ -52,6 +52,7 @@ func main() {
 		    fmt.Print("  --init                             Initialize default policy configuration\n")
     }
 
+    hardenedMode := flag.Bool("hardened", false, "Enable maximum security zero-trust isolation (Blocks local network extensions)")
     initCmd := flag.Bool("init", false, "Initialize a default nb-policy.yaml")
     flag.Parse()
 
@@ -72,13 +73,13 @@ func main() {
       case "exec":
           promptCommand()
       default:
-          agentCommand()
+          agentCommand(*hardenedMode)
     }
 
     // 4. Start the session using 'userPrompt'...
    
 }
-func agentCommand() {
+func agentCommand(hardened bool) {
 	var agentCmd []string
 	splitIdx := -1
 
@@ -93,7 +94,7 @@ func agentCommand() {
 		return
 	}
 		agentCmd = os.Args[splitIdx+1:]
-	session.RunProxySession(agentCmd)
+	session.RunProxySession(agentCmd, hardened)
 }
 
 func promptCommand(){
