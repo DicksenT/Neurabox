@@ -1,0 +1,2 @@
+[console_scripts]
+neuragraph = neuragraph.__main__:main
