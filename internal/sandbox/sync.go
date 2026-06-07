@@ -66,14 +66,14 @@ func DiffSnapshots(before, after FileSnapshot) []string {
 		seen[rel] = true
 		beforeInfo, existed := before[rel]
 		if !existed {
-			changed = append(changed, rel+" (added)")
+			changed = append(changed, rel) // Pure relative tracking
 		} else if afterInfo.Size != beforeInfo.Size || afterInfo.ModTime.After(beforeInfo.ModTime) {
-			changed = append(changed, rel+" (modified)")
+			changed = append(changed, rel) // Pure relative tracking
 		}
 	}
 	for rel := range before {
 		if !seen[rel] {
-			changed = append(changed, rel+" (deleted)")
+			changed = append(changed, rel) // Pure relative tracking
 		}
 	}
 	return changed
@@ -111,7 +111,7 @@ func exportChanges(sourceDir string, targetDir string, blockList []string) ([]st
 	// --- Phase 1: Sync deletions ---
 	// Walk the TARGET and remove anything that no longer exists in the source.
 	// This ensures deleted files don't silently persist in the real project.
-	err := filepath.WalkDir(pDir, func(path string, d os.DirEntry, err error) error {
+	/*err := filepath.WalkDir(pDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil // target may not exist yet; that's fine
 		}
@@ -144,9 +144,9 @@ func exportChanges(sourceDir string, targetDir string, blockList []string) ([]st
 	if err != nil {
 		return nil, fmt.Errorf("deletion sync failed: %v", err)
 	}
-
+	*/
 	// --- Phase 2: Copy new/changed files from source to target ---
-	err = filepath.Walk(sDir, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(sDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -161,7 +161,7 @@ func exportChanges(sourceDir string, targetDir string, blockList []string) ([]st
 		// Skip heavy and blocked directories entirely.
 		if info.IsDir() {
 			if slices.Contains(heavyDirs, name) || slices.Contains(blockList, name) {
-				fmt.Printf("⏭️  Skipping dir: %s\n", relPath)
+				fmt.Printf(" Skipping dir: %s\n", relPath)
 				return filepath.SkipDir
 			}
 			_ = os.MkdirAll(filepath.Join(pDir, relPath), 0755)
@@ -169,10 +169,11 @@ func exportChanges(sourceDir string, targetDir string, blockList []string) ([]st
 		}
 
 		// Skip locked / irrelevant file types.
-		if strings.HasSuffix(name, ".exe") || name == "audit.log" || slices.Contains(blockList, name) {
-			return nil
+		if strings.HasSuffix(name, ".exe") || name == "audit.log" || slices.Contains(blockList, name) ||
+			name == ".claudeignore" || name == ".aiderignore" || name == ".cursorignore" || 
+			name == ".copilotignore" || name == ".codeiumignore" || name == ".ignore" || name == "nb-graph" || name == "AI_CONTEXT.md" || name == "graph.json"{
+			return nil // 🚀 Spared! This stays inside the shadow directory and is never synced back to the host.
 		}
-
 		targetPath := filepath.Join(pDir, relPath)
 
 		// Skip the copy if the target already has the same content.
@@ -184,7 +185,7 @@ func exportChanges(sourceDir string, targetDir string, blockList []string) ([]st
 		}
 
 		fmt.Printf("📝 Syncing: %s\n", relPath)
-		if copyErr := copyFile(path, targetPath, info.Mode()); copyErr != nil {
+		if copyErr := CopyFile(path, targetPath, info.Mode()); copyErr != nil {
 			fmt.Printf("⚠️  Skipped %s: %v\n", relPath, copyErr)
 		} else {
 			changed = append(changed, relPath)
@@ -197,7 +198,7 @@ func exportChanges(sourceDir string, targetDir string, blockList []string) ([]st
 }
 
 // copyFile copies srcPath to dstPath preserving the given mode.
-func copyFile(srcPath, dstPath string, mode os.FileMode) error {
+func  CopyFile(srcPath, dstPath string, mode os.FileMode) error {
 	src, err := os.Open(srcPath)
 	if err != nil {
 		return err
