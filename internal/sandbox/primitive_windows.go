@@ -5,10 +5,8 @@ package sandbox
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -28,7 +26,7 @@ func (p *PrimitiveEngine) Create(ctx context.Context, workingDir string) error {
 	return nil
 }
 
-func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string, command []string, tempRtkDir string, hardened bool) error {
+func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string, command []string, assetDir string, hardened bool) error {
 	if len(command) == 0 {
 		return fmt.Errorf("empty command block provided")
 	}
@@ -58,8 +56,6 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 	//   CD        — cmd.exe internal; strip to avoid confusion.
 	// Keys we strip entirely:
 	//   VSCODE_*, ELECTRON_* — IPC socket paths that trigger background round-trips.
-	// --- Environment assembly ---
-	// --- Environment assembly ---
 	var cleanEnv []string
 	for _, env := range os.Environ() {
 		// 1. OBLITERATE Windows hidden drive tracking (e.g. =D:=D:\Neurabox)
@@ -96,7 +92,7 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 	// Add exactly one controlled entry for each path-sensitive variable.
 	rtkDB := os.Getenv("RTK_DB_PATH")
 	cleanEnv = append(cleanEnv,
-		fmt.Sprintf("PATH=%s;%s", tempRtkDir, os.Getenv("PATH")),
+		fmt.Sprintf("PATH=%s;%s", assetDir, os.Getenv("PATH")),
 		fmt.Sprintf("PWD=%s", workingDir),
 		fmt.Sprintf("INIT_CWD=%s", workingDir),
 		fmt.Sprintf("CD=%s", workingDir),
@@ -125,21 +121,6 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 	// Inside internal/sandbox/primitive_windows.go -> RunInteractive()
 
 	// Create a temporary memory buffer or a raw session log file
-	sessionLogPath := filepath.Join(".", "logs", "raw_session.log")
-	_ = os.MkdirAll(filepath.Dir(sessionLogPath), 0755)
-	sessionLogFile, err := os.OpenFile(sessionLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-
-	if err == nil {
-		defer sessionLogFile.Close()
-		// io.MultiWriter duplicates the agent's output: 
-		// 1 stream goes directly to the user's monitor, 1 stream goes safely into your log file!
-		cmd.Stdout = io.MultiWriter(os.Stdout, sessionLogFile)
-		cmd.Stderr = io.MultiWriter(os.Stderr, sessionLogFile)
-	} else {
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-	}
-
 	// --- Job Object sandbox ---
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
