@@ -1,7 +1,7 @@
 package Types
 
 type AuditEntry struct{
-	Prompt string
+	Purpose string
 	User string
 	ID string
 	Agent string
@@ -10,4 +10,5 @@ type AuditEntry struct{
 	Approved bool
 	TestPass bool
 	Timestamp string
+	
 }
