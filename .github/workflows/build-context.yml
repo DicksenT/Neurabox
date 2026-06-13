@@ -5,29 +5,27 @@ on:
     branches:
       - main
       - master
-  workflow_dispatch: # Allows you to manually trigger the build from the GitHub UI
+  workflow_dispatch:  # Allows manual trigger from GitHub UI
 
 jobs:
   build:
     name: Build on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     
-    # This forces EVERY step below to run inside your 'internal' folder
+    # Run all command line steps inside the 'internal' folder
     defaults:
       run:
         working-directory: ./internal
 
     strategy:
       matrix:
-        # Spin up all three native host operating systems simultaneously
         os: [ubuntu-latest, windows-latest, macos-latest]
 
     steps:
-      # Step 1 needs to run from the absolute root to check out the full repo
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          path: '' # Checks out the root directory
+          path: ''   # Checks out the whole repository
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -38,20 +36,27 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           version: "latest"
+          enable-cache: true # 🌟 Replaces manual actions/cache safely for all 3 operating systems
 
-      # This now runs cleanly inside /internal because of the defaults layout above
-      - name: Sync Dependencies
-        run: uv pip install -r pyproject.toml --system
+      # Install the neuragraph package and all its dependencies
+      - name: Install dependencies
+        run: uv pip install -e . --system
 
+      # PyInstaller is a dev dependency, install it explicitly
+      - name: Install PyInstaller
+        run: uv pip install pyinstaller --system
+
+      # Windows build (semicolon separator, .exe extension)
       - name: Build Binary (Windows)
         if: matrix.os == 'windows-latest'
         run: uv run pyinstaller --onefile --name neurabox_context --add-data "neuragraph;neuragraph" --clean --noupx neuragraph_ast.py
 
+      # Linux & macOS build (colon separator, no extension)
       - name: Build Binary (Linux & macOS)
         if: matrix.os != 'windows-latest'
         run: uv run pyinstaller --onefile --name neurabox_context --add-data "neuragraph:neuragraph" --clean --noupx neuragraph_ast.py
 
-      # Upload grabs the compiled binaries directly from the /internal/dist folder
+      # Upload the generated binary as an artifact
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
