@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"bufio"
@@ -139,66 +140,33 @@ func RunProxySession(agentCmd []string, hardened bool) {
 		log.Fatalf("failed to allocate assets workspace: %v", err)
 	}
 
+		// Set up rtk locally (non‑interactive, inside sandbox only)
+	rtkBinData, rtkBinName,_ := assets.GetRTKBinary()
+    if rtkBinData != nil {
+        rtkPath := filepath.Join(assetDir, rtkBinName)
+        if err := os.WriteFile(rtkPath, rtkBinData, 0755); err != nil {
+		// handle error
+			log.Fatalf("failed to initialize embedded optimizer: %v", err)
+		}
+		if runtime.GOOS != "windows" {
+			if err := os.Chmod(rtkPath, 0755); err != nil {
+				// handle error
+				log.Fatalf("failed to initialize embedded optimizer: %v", err)
+			}
+		}
+        // Run init
+        cmd := exec.Command(rtkPath, "init", "--local")
+        cmd.Dir = shadowDir
+        cmd.Env = append(os.Environ(), "RTK_NONINTERACTIVE=1")
+        cmd.Run() // ignore error
+    }
 
-
-	// Extract the rtk binary.
-	rtkPath := filepath.Join(assetDir, "rtk-windows.exe")
-	if err := os.WriteFile(rtkPath, assets.RTKBinary, 0755); err != nil {
-		log.Fatalf("failed to initialize embedded optimizer: %v", err)
-	}
-
-	
 	 // --- SILENT GRAPH BUILD ---
 	neuragraphPath := filepath.Join(assetDir, "neuragraph.exe")
 	if err := os.WriteFile(neuragraphPath, assets.Neuragraph, 0755); err != nil{
 		log.Fatalf("failed to initialize embedded optimizer: %v", err)
 	}
 
-	// Write .exe shim copies instead of .bat wrappers.
-	//
-	// PERFORMANCE FIX: The previous .bat shims required:
-	//   agent → cmd.exe(parse batch) → rtk-windows.exe → real tool
-	// Three process hops × ~30-50ms CreateProcess each = visible lag on every
-	// git/npm/npx call the agent makes in the background.
-	//
-	// rtk-windows.exe already uses os.Args[0] (its own executable name) to know
-	// which tool to proxy. Copying the binary directly as git.exe / npm.exe / npx.exe
-	// means the chain becomes:
-	//   agent → rtk-windows.exe(as git.exe) → real tool
-	// One hop removed, no cmd.exe overhead.
-	// 🚀 THE FIX: Use absolute path Lookups with accurate Windows extensions
-	interceptedTools := []string{"git", "npm", "npx"}
-	for _, tool := range interceptedTools {
-		// 1. Find the REAL tool on the host before we manipulate the sandbox PATH
-		realToolPath, err := exec.LookPath(tool)
-		if err != nil {
-			continue // If they don't have git/npm installed, skip it cleanly
-		}
-
-		// 2. Node.js agents explicitly call "npm.cmd", while git uses "git.exe".
-		// We must map our shims to the exact extension the agent expects to intercept it.
-		ext := filepath.Ext(realToolPath)
-		if ext == "" {
-			ext = ".exe"
-		}
-		
-		shimPath := filepath.Join(assetDir, tool+ext)
-
-		// 3. We inject the ABSOLUTE path to the real tool directly into RTK.
-		// RTK receives: Args[0]="rtk.exe", Args[1]="C:\Program Files\...\npm.cmd", Args[2]="list"
-		// This guarantees 0% argument corruption and 0% infinite loop risk.
-		shimContent := fmt.Sprintf("@echo off\n\"%s\" \"%s\" %%*\n", rtkPath, tool)
-		
-		if err := os.WriteFile(shimPath, []byte(shimContent), 0755); err != nil {
-			log.Printf("Warning: failed to write shim for %s: %v", tool, err)
-		}
-	}
-
-	// Set env vars BEFORE RunInteractive snapshots os.Environ() to build cmd.Env,
-	// so RTK_DB_PATH, TERM, and COLORTERM are actually inherited by the child process.
-	persistentDB := filepath.Join(os.Getenv("APPDATA"), "neurabox", "rtk_metrics.db")
-	_ = os.MkdirAll(filepath.Dir(persistentDB), 0755)
-	os.Setenv("RTK_DB_PATH", persistentDB)
 	
 	// BUG FIX 6: project-specific cache so multiple projects don't share a cache.
 	projHash := fmt.Sprintf("%x", md5Hash(projectDir))[:8]
@@ -239,11 +207,6 @@ func RunProxySession(agentCmd []string, hardened bool) {
 	// Single grouped defer — all cleanup in explicit order.
 	// gainCmd must run BEFORE assetDir is deleted (rtkPath lives inside it).
 	defer func() {
-		fmt.Println("\n[Neurabox Token Metrics]:")
-		gainCmd := exec.Command(rtkPath, "gain")
-		gainCmd.Stdout = os.Stdout
-		_ = gainCmd.Run()
-
 		_ = runtime.Destroy(ctx)
 		os.RemoveAll(shadowDir)
 		os.RemoveAll(assetDir) // last — after gainCmd finished using rtkPath
