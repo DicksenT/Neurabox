@@ -45,11 +45,10 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 	}
 
 	// Extract the rtk binary.
-
 	var rtkPath string
 	rtkBinData, rtkBinName,_ := assets.GetRTKBinary()
     if rtkBinData != nil {
-        rtkPath := filepath.Join(assetDir, rtkBinName)
+        rtkPath = filepath.Join(assetDir, rtkBinName)
         if err := os.WriteFile(rtkPath, rtkBinData, 0755); err != nil {
 		// handle error
 			log.Fatalf("failed to initialize embedded optimizer: %v", err)
@@ -60,11 +59,7 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 				log.Fatalf("failed to initialize embedded optimizer: %v", err)
 			}
 		}
-        // Run init
     }
-
-	
-
 	// Write .exe shim copies instead of .bat wrappers.
 	//
 	// PERFORMANCE FIX: The previous .bat shims required:
@@ -104,13 +99,11 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 			log.Printf("Warning: failed to write shim for %s: %v", tool, err)
 		}
 	}
-
 	// Set env vars BEFORE RunInteractive snapshots os.Environ() to build cmd.Env,
 	// so RTK_DB_PATH, TERM, and COLORTERM are actually inherited by the child process.
 	persistentDB := filepath.Join(os.Getenv("APPDATA"), "neurabox", "rtk_metrics.db")
 	_ = os.MkdirAll(filepath.Dir(persistentDB), 0755)
 	os.Setenv("RTK_DB_PATH", persistentDB)
-
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 	cmd.Dir = workingDir
 
@@ -217,9 +210,7 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 	// no DETACHED_PROCESS) so the child inherits stdin/stdout/stderr console
 	// handles directly from the OS, bypassing Go's pipe bridge entirely.
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_SUSPENDED | windows.CREATE_NO_WINDOW,
-		HideWindow: true,
-
+		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_SUSPENDED,
 	}
 
 	if err = cmd.Start(); err != nil {
@@ -287,7 +278,6 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 		_ = cmd.Process.Kill()
 		return fmt.Errorf("failed to resume primary thread: %v", err)
 	}
-
 	err = cmd.Wait()
 	if err != nil && !strings.Contains(err.Error(), "exit status") {
 		return err
