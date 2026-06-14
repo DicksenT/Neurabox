@@ -140,33 +140,51 @@ func RunProxySession(agentCmd []string, hardened bool) {
 		log.Fatalf("failed to allocate assets workspace: %v", err)
 	}
 
-		// Set up rtk locally (non‑interactive, inside sandbox only)
-	rtkBinData, rtkBinName,_ := assets.GetRTKBinary()
+// --- RTK INITIALIZATION ---
+rtkBinData, rtkBinName, err := assets.GetRTKBinary()
+    if err != nil {
+        log.Fatalf("failed to resolve embedded optimizer: %v", err)
+    }
+
     if rtkBinData != nil {
         rtkPath := filepath.Join(assetDir, rtkBinName)
         if err := os.WriteFile(rtkPath, rtkBinData, 0755); err != nil {
-		// handle error
-			log.Fatalf("failed to initialize embedded optimizer: %v", err)
-		}
-		if runtime.GOOS != "windows" {
-			if err := os.Chmod(rtkPath, 0755); err != nil {
-				// handle error
-				log.Fatalf("failed to initialize embedded optimizer: %v", err)
-			}
-		}
+            log.Fatalf("failed to initialize embedded optimizer: %v", err)
+        }
+        if runtime.GOOS != "windows" {
+            if err := os.Chmod(rtkPath, 0755); err != nil {
+                log.Fatalf("failed to set optimizer permissions: %v", err)
+            }
+        }
+        
         // Run init
         cmd := exec.Command(rtkPath, "init", "--local")
         cmd.Dir = shadowDir
         cmd.Env = append(os.Environ(), "RTK_NONINTERACTIVE=1")
         cmd.Run() // ignore error
+		fmt.Println("rtk initialize")
+    }
+	
+    // --- DYNAMIC NEURAGRAPH CONTEXT BUILD ---
+	var neuragraphPath string
+    ngBinData, ngBinName, err := assets.GetNeuragraphBinary()
+    if err != nil {
+        log.Fatalf("failed to resolve embedded context engine: %v", err)
     }
 
-	 // --- SILENT GRAPH BUILD ---
-	neuragraphPath := filepath.Join(assetDir, "neuragraph.exe")
-	if err := os.WriteFile(neuragraphPath, assets.Neuragraph, 0755); err != nil{
-		log.Fatalf("failed to initialize embedded optimizer: %v", err)
-	}
-
+    if ngBinData != nil {
+        neuragraphPath = filepath.Join(assetDir, ngBinName)
+        if err := os.WriteFile(neuragraphPath, ngBinData, 0755); err != nil {
+            log.Fatalf("failed to initialize embedded context engine: %v", err)
+        }
+        
+        // Crucial: Ensure Unix execution permissions are set for Linux and macOS targets
+        if runtime.GOOS != "windows" {
+            if err := os.Chmod(neuragraphPath, 0755); err != nil {
+                log.Fatalf("failed to set context engine permissions: %v", err)
+            }
+        }
+    }
 	
 	// BUG FIX 6: project-specific cache so multiple projects don't share a cache.
 	projHash := fmt.Sprintf("%x", md5Hash(projectDir))[:8]
@@ -242,7 +260,6 @@ func RunProxySession(agentCmd []string, hardened bool) {
 		}
 		fmt.Println("✅")
 	}
-
 
 	audit := Types.AuditEntry{
 		ID:       "proxy-" + filepath.Base(shadowDir), // Unique session trace string
