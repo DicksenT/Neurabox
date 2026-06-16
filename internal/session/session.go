@@ -15,6 +15,7 @@ import (
 
 	"github.com/DicksenT/neurabox/internal/assets"
 	"github.com/DicksenT/neurabox/internal/policy"
+	"github.com/DicksenT/neurabox/internal/rtk"
 	"github.com/DicksenT/neurabox/internal/sandbox"
 	Types "github.com/DicksenT/neurabox/internal/types"
 	"github.com/moby/moby/api/types/mount"
@@ -81,7 +82,7 @@ func RunSession(prompt string) {
 		ID:       mgr.ID,
 		TestPass: false,
 		Approved: false,
-		Purpose: "",
+		Purpose:  "",
 		Agent:    model,
 		Files:    files,
 	}
@@ -140,52 +141,31 @@ func RunProxySession(agentCmd []string, hardened bool) {
 		log.Fatalf("failed to allocate assets workspace: %v", err)
 	}
 
-// --- RTK INITIALIZATION ---
-rtkBinData, rtkBinName, err := assets.GetRTKBinary()
-    if err != nil {
-        log.Fatalf("failed to resolve embedded optimizer: %v", err)
-    }
-
-    if rtkBinData != nil {
-        rtkPath := filepath.Join(assetDir, rtkBinName)
-        if err := os.WriteFile(rtkPath, rtkBinData, 0755); err != nil {
-            log.Fatalf("failed to initialize embedded optimizer: %v", err)
-        }
-        if runtime.GOOS != "windows" {
-            if err := os.Chmod(rtkPath, 0755); err != nil {
-                log.Fatalf("failed to set optimizer permissions: %v", err)
-            }
-        }
-        
-        // Run init
-        cmd := exec.Command(rtkPath, "init", "--local")
-        cmd.Dir = shadowDir
-        cmd.Env = append(os.Environ(), "RTK_NONINTERACTIVE=1")
-        cmd.Run() // ignore error
-		fmt.Println("rtk initialize")
-    }
-	
-    // --- DYNAMIC NEURAGRAPH CONTEXT BUILD ---
+	// --- RTK INITIALIZATION ---
+	if err := rtk.Setup(assetDir, shadowDir); err != nil {
+		log.Printf("Warning: RTK optimization layer failed to initialize: %v", err)
+	}
+	// --- DYNAMIC NEURAGRAPH CONTEXT BUILD ---
 	var neuragraphPath string
-    ngBinData, ngBinName, err := assets.GetNeuragraphBinary()
-    if err != nil {
-        log.Fatalf("failed to resolve embedded context engine: %v", err)
-    }
+	ngBinData, ngBinName, err := assets.GetNeuragraphBinary()
+	if err != nil {
+		log.Fatalf("failed to resolve embedded context engine: %v", err)
+	}
 
-    if ngBinData != nil {
-        neuragraphPath = filepath.Join(assetDir, ngBinName)
-        if err := os.WriteFile(neuragraphPath, ngBinData, 0755); err != nil {
-            log.Fatalf("failed to initialize embedded context engine: %v", err)
-        }
-        
-        // Crucial: Ensure Unix execution permissions are set for Linux and macOS targets
-        if runtime.GOOS != "windows" {
-            if err := os.Chmod(neuragraphPath, 0755); err != nil {
-                log.Fatalf("failed to set context engine permissions: %v", err)
-            }
-        }
-    }
-	
+	if ngBinData != nil {
+		neuragraphPath = filepath.Join(assetDir, ngBinName)
+		if err := os.WriteFile(neuragraphPath, ngBinData, 0755); err != nil {
+			log.Fatalf("failed to initialize embedded context engine: %v", err)
+		}
+
+		// Crucial: Ensure Unix execution permissions are set for Linux and macOS targets
+		if runtime.GOOS != "windows" {
+			if err := os.Chmod(neuragraphPath, 0755); err != nil {
+				log.Fatalf("failed to set context engine permissions: %v", err)
+			}
+		}
+	}
+
 	// BUG FIX 6: project-specific cache so multiple projects don't share a cache.
 	projHash := fmt.Sprintf("%x", md5Hash(projectDir))[:8]
 	cacheDir := filepath.Join(os.Getenv("APPDATA"), "neurabox", "neuragraph-cache", projHash)
@@ -216,7 +196,6 @@ rtkBinData, rtkBinName, err := assets.GetRTKBinary()
 
 	runtime := sandbox.NewPrimitiveEngine()
 	ctx := context.Background()
-
 
 	fmt.Println("Launching isolated shadow workspace view")
 	openCmd := exec.Command("cmd.exe", "/c", "code", shadowDir)
@@ -262,12 +241,12 @@ rtkBinData, rtkBinName, err := assets.GetRTKBinary()
 	}
 
 	audit := Types.AuditEntry{
-		ID:       "proxy-" + filepath.Base(shadowDir), // Unique session trace string
-		TestPass: allPassed,
-		Approved: false,
-		Purpose:   purpose,            // Tracks exactly what command the user typed for the agent
-		Agent:    agentLabel,
-		Files:    changedFiles,               // Tracks string slice of every single added/modified file
+		ID:        "proxy-" + filepath.Base(shadowDir), // Unique session trace string
+		TestPass:  allPassed,
+		Approved:  false,
+		Purpose:   purpose, // Tracks exactly what command the user typed for the agent
+		Agent:     agentLabel,
+		Files:     changedFiles, // Tracks string slice of every single added/modified file
 		BlockList: cfg.Blocks,
 	}
 
@@ -281,9 +260,9 @@ rtkBinData, rtkBinName, err := assets.GetRTKBinary()
 			cmd.Run()
 		}
 		if promptYN("Confirm export to your real project?") {
-			exported,_ := sandbox.ExportChangesTracked(shadowDir, projectDir, nil)
+			exported, _ := sandbox.ExportChangesTracked(shadowDir, projectDir, nil)
 			fmt.Println("Project updated")
-			audit.Approved = true	
+			audit.Approved = true
 			printInstallReminder(exported)
 		} else {
 			fmt.Println("Export canceled, shadow workspace discarded")
@@ -291,6 +270,7 @@ rtkBinData, rtkBinName, err := assets.GetRTKBinary()
 	}
 	sandbox.AuditLog(&audit)
 }
+
 // promptYN prints "[y/N]: " after the question and returns true only for "y"/"Y".
 func promptYN(question string) bool {
 	fmt.Printf("%s [y/N]: ", question)
@@ -314,6 +294,7 @@ func printInstallReminder(exported []string) {
 	}
 	fmt.Println("for safety, file deleted by agent is not deleted in original source")
 }
+
 // md5Hash returns the MD5 digest of a string as a byte slice.
 func md5Hash(s string) []byte {
 	h := md5.New()
@@ -387,20 +368,21 @@ site/
 
 	return os.WriteFile(targetPath, []byte(finalContent), 0644)
 }
+
 // Helper to sanitize files and remove old blocks on re-runs
 func stripOldNeuraboxBlock(content string) string {
 	normalized := strings.ReplaceAll(content, "\r\n", "\n")
-	
+
 	// Locate our distinct block tags
 	startIdx := strings.Index(normalized, "# --- BEGIN NEURABOX TOKEN GUARD ---")
 	endIdx := strings.Index(normalized, "# --- END NEURABOX TOKEN GUARD ---")
-	
+
 	if startIdx != -1 && endIdx != -1 && endIdx > startIdx {
 		// Slice out the block, keeping everything before and after it
 		before := normalized[:startIdx]
 		after := normalized[endIdx+len("# --- END NEURABOX TOKEN GUARD ---"):]
 		return strings.TrimSpace(before + after)
 	}
-	
+
 	return strings.TrimSpace(content)
 }

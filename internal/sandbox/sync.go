@@ -21,13 +21,13 @@ var heavyDirs = []string{
 	"build",
 	".next",
 	".nuxt",
-	"vendor",       // Go / PHP
+	"vendor", // Go / PHP
 	"__pycache__",
 	".venv",
 	"venv",
 	".mypy_cache",
 	".pytest_cache",
-	"target",       // Rust / Maven
+	"target", // Rust / Maven
 	".gradle",
 	".idea",
 	".vscode",
@@ -170,8 +170,8 @@ func exportChanges(sourceDir string, targetDir string, blockList []string) ([]st
 
 		// Skip locked / irrelevant file types.
 		if strings.HasSuffix(name, ".exe") || name == "audit.log" || slices.Contains(blockList, name) ||
-			name == ".claudeignore" || name == ".aiderignore" || name == ".cursorignore" || 
-			name == ".copilotignore" || name == ".codeiumignore" || name == ".ignore" || name == "nb-graph" || name == "AI_CONTEXT.md" || name == "graph.json"{
+			name == ".claudeignore" || name == ".aiderignore" || name == ".cursorignore" ||
+			name == ".copilotignore" || name == ".codeiumignore" || name == ".ignore" || name == "nb-graph" || name == "AI_CONTEXT.md" || name == "graph.json" {
 			return nil // 🚀 Spared! This stays inside the shadow directory and is never synced back to the host.
 		}
 		targetPath := filepath.Join(pDir, relPath)
@@ -198,7 +198,7 @@ func exportChanges(sourceDir string, targetDir string, blockList []string) ([]st
 }
 
 // copyFile copies srcPath to dstPath preserving the given mode.
-func  CopyFile(srcPath, dstPath string, mode os.FileMode) error {
+func CopyFile(srcPath, dstPath string, mode os.FileMode) error {
 	src, err := os.Open(srcPath)
 	if err != nil {
 		return err

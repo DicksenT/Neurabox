@@ -5,16 +5,12 @@ package sandbox
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"unsafe"
 
-	"github.com/DicksenT/neurabox/internal/assets"
 	"golang.org/x/sys/windows"
 	"golang.org/x/term"
 )
@@ -44,66 +40,6 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 		_ = windows.SetConsoleMode(stdoutHandle, consoleMode|0x0004) // ENABLE_VIRTUAL_TERMINAL_PROCESSING
 	}
 
-	// Extract the rtk binary.
-	var rtkPath string
-	rtkBinData, rtkBinName,_ := assets.GetRTKBinary()
-    if rtkBinData != nil {
-        rtkPath = filepath.Join(assetDir, rtkBinName)
-        if err := os.WriteFile(rtkPath, rtkBinData, 0755); err != nil {
-		// handle error
-			log.Fatalf("failed to initialize embedded optimizer: %v", err)
-		}
-		if runtime.GOOS != "windows" {
-			if err := os.Chmod(rtkPath, 0755); err != nil {
-				// handle error
-				log.Fatalf("failed to initialize embedded optimizer: %v", err)
-			}
-		}
-    }
-	// Write .exe shim copies instead of .bat wrappers.
-	//
-	// PERFORMANCE FIX: The previous .bat shims required:
-	//   agent → cmd.exe(parse batch) → rtk-windows.exe → real tool
-	// Three process hops × ~30-50ms CreateProcess each = visible lag on every
-	// git/npm/npx call the agent makes in the background.
-	//
-	// rtk-windows.exe already uses os.Args[0] (its own executable name) to know
-	// which tool to proxy. Copying the binary directly as git.exe / npm.exe / npx.exe
-	// means the chain becomes:
-	//   agent → rtk-windows.exe(as git.exe) → real tool
-	// One hop removed, no cmd.exe overhead.
-	// 🚀 THE FIX: Use absolute path Lookups with accurate Windows extensions
-	interceptedTools := []string{"git", "npm", "npx"}
-	for _, tool := range interceptedTools {
-		// 1. Find the REAL tool on the host before we manipulate the sandbox PATH
-		realToolPath, err := exec.LookPath(tool)
-		if err != nil {
-			continue // If they don't have git/npm installed, skip it cleanly
-		}
-
-		// 2. Node.js agents explicitly call "npm.cmd", while git uses "git.exe".
-		// We must map our shims to the exact extension the agent expects to intercept it.
-		ext := filepath.Ext(realToolPath)
-		if ext == "" {
-			ext = ".exe"
-		}
-		
-		shimPath := filepath.Join(assetDir, tool+ext)
-
-		// 3. We inject the ABSOLUTE path to the real tool directly into RTK.
-		// RTK receives: Args[0]="rtk.exe", Args[1]="C:\Program Files\...\npm.cmd", Args[2]="list"
-		// This guarantees 0% argument corruption and 0% infinite loop risk.
-		shimContent := fmt.Sprintf("@echo off\n\"%s\" \"%s\" %%*\n", rtkPath, tool)
-		
-		if err := os.WriteFile(shimPath, []byte(shimContent), 0755); err != nil {
-			log.Printf("Warning: failed to write shim for %s: %v", tool, err)
-		}
-	}
-	// Set env vars BEFORE RunInteractive snapshots os.Environ() to build cmd.Env,
-	// so RTK_DB_PATH, TERM, and COLORTERM are actually inherited by the child process.
-	persistentDB := filepath.Join(os.Getenv("APPDATA"), "neurabox", "rtk_metrics.db")
-	_ = os.MkdirAll(filepath.Dir(persistentDB), 0755)
-	os.Setenv("RTK_DB_PATH", persistentDB)
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 	cmd.Dir = workingDir
 
@@ -143,10 +79,10 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 		if strings.HasPrefix(upper, "VSCODE_") ||
 			strings.HasPrefix(upper, "ELECTRON_") ||
 			strings.HasPrefix(upper, "NPM_") ||
-			strings.HasPrefix(upper, "GIT_") ||      
-			strings.HasPrefix(upper, "CLAUDE_") ||   
-			strings.HasPrefix(upper, "GEMINI_") ||   
-			strings.HasPrefix(upper, "AIDER_") {  
+			strings.HasPrefix(upper, "GIT_") ||
+			strings.HasPrefix(upper, "CLAUDE_") ||
+			strings.HasPrefix(upper, "GEMINI_") ||
+			strings.HasPrefix(upper, "AIDER_") {
 			continue
 		}
 

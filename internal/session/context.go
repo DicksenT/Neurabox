@@ -13,10 +13,10 @@ import (
 // agentContextFiles maps agent name patterns to the filename they auto-read
 // on startup. Written by graphify_ast.py directly into shadowDir.
 var agentContextFiles = map[string]string{
-	"claude": "CLAUDE.md",
-	"gemini": "GEMINI.md",
-	"aider":  ".aider.md",
-	"cursor": ".cursorrules",
+	"claude":  "CLAUDE.md",
+	"gemini":  "GEMINI.md",
+	"aider":   ".aider.md",
+	"cursor":  ".cursorrules",
 	"default": "AI_CONTEXT.md",
 }
 
