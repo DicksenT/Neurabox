@@ -12,7 +12,6 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
-	"golang.org/x/term"
 )
 
 type PrimitiveEngine struct{}
@@ -202,13 +201,13 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 
 	// Drop into raw mode as late as possible — just before we unblock the child —
 	// so the window where raw bytes could be misread is minimal.
-	stdinFd := int(os.Stdin.Fd())
-	oldState, err := term.MakeRaw(stdinFd)
+
+	
 	if err != nil {
 		_ = cmd.Process.Kill()
 		return fmt.Errorf("failed to enter raw terminal mode: %v", err)
 	}
-	defer func() { _ = term.Restore(stdinFd, oldState) }()
+
 
 	if _, err = windows.ResumeThread(threadHandle); err != nil {
 		_ = cmd.Process.Kill()
