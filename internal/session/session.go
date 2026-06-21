@@ -18,105 +18,7 @@ import (
 	"github.com/DicksenT/neurabox/internal/rtk"
 	"github.com/DicksenT/neurabox/internal/sandbox"
 	Types "github.com/DicksenT/neurabox/internal/types"
-	"github.com/moby/moby/api/types/mount"
 )
-
-func RunSession(prompt string) {
-	cwd, _ := os.Getwd()
-	policyPath := filepath.Join(cwd, "nb-policy.yaml")
-	cfg, err := policy.Load(policyPath)
-	if err != nil {
-		log.Fatalf("Failed to load policy: %v", err)
-	}
-	projectDir, err := filepath.Abs(".")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	shadowDir, err := os.MkdirTemp("", "neurabox-*")
-	if err != nil {
-		log.Fatal(err)
-	}
-	mgr := sandbox.DockerManager()
-	ctx := context.Background()
-	defer func() {
-		fmt.Printf("Cleaning up sandbox %s...\n", mgr.ID[:12])
-		mgr.DestroySandbox(ctx)
-		os.RemoveAll(shadowDir)
-	}()
-	mgr.ExportChanges(projectDir, shadowDir, cfg.Blocks)
-
-	var dockerMounts []mount.Mount
-	for _, m := range cfg.Mounts {
-		var sourcePath string
-		if m.Mode == "rw" {
-			sourcePath = filepath.Join(shadowDir, m.Source)
-		} else {
-			sourcePath = filepath.Join(projectDir, m.Source)
-		}
-		absSource, _ := filepath.Abs(sourcePath)
-		if _, err := os.Stat(absSource); os.IsNotExist(err) {
-			fmt.Printf("Warning: Mount source %s does not exist. Skipping.\n", absSource)
-			continue
-		}
-		dockerMounts = append(dockerMounts, mount.Mount{
-			Type:     mount.TypeBind,
-			Source:   absSource,
-			Target:   m.Target,
-			ReadOnly: m.Mode == "ro",
-		})
-	}
-
-	if err := mgr.CreateSandbox(ctx, cfg.Image, dockerMounts); err != nil {
-		log.Fatalf("failed to start sandbox: %v", err)
-	}
-	fmt.Printf("Sandbox started!, id: %s\n", mgr.ID)
-	fmt.Println("Code now isolated, it cannot see your system or the internet")
-
-	fmt.Println("AI is thinking...")
-	response, model, _ := mgr.AskAI(ctx, prompt, shadowDir)
-	fmt.Printf("AI Suggestion: %s\n", response)
-	files, err := mgr.ApplyAI(shadowDir, response)
-
-	audit := Types.AuditEntry{
-		ID:       mgr.ID,
-		TestPass: false,
-		Approved: false,
-		Purpose:  "",
-		Agent:    model,
-		Files:    files,
-	}
-
-	allPassed := true
-	for _, check := range cfg.Checks {
-		fmt.Printf("Running guardrail: %s...\n", check.CName)
-		if err := mgr.ExecInSandbox(ctx, mgr.ID, []string{"sh", "-c", check.Command}); err != nil {
-			fmt.Printf("Failed, %s, blocking code export\nerror: %s\n", check.CName, err)
-			allPassed = false
-			break
-		}
-	}
-
-	if allPassed {
-		audit.TestPass = true
-		fmt.Println("\n--- NEURABOX AUDIT GATE ---")
-		fmt.Println("Guardrails: ALL PASSED")
-		if promptYN("do you want to see the git Diff?") {
-			cmd := exec.Command("git", "--no-pager", "diff", "--no-index", shadowDir, projectDir)
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			cmd.Run()
-		}
-		if promptYN("Confirm export to your real project?") {
-			audit.Approved = true
-			mgr.ExportChanges(shadowDir, projectDir, nil)
-			fmt.Println("Project updated")
-		} else {
-			fmt.Println("Export canceled, shadow workspace discarded")
-		}
-	}
-	sandbox.AuditLog(&audit)
-}
 
 func RunProxySession(agentCmd []string, hardened bool) {
 	cwd, _ := os.Getwd()
@@ -208,67 +110,91 @@ func RunProxySession(agentCmd []string, hardened bool) {
 		os.RemoveAll(shadowDir)
 		os.RemoveAll(assetDir) // last — after gainCmd finished using rtkPath
 	}()
-
-	if err := runtime.RunInteractive(ctx, shadowDir, agentCmd, assetDir, hardened); err != nil {
-		fmt.Printf("Agent runtime session interrupted: %v\n", err)
-	}
-	agentLabel := strings.Join(agentCmd, " ")
-	var changedFiles []string
-	if preSnap != nil {
-		if postSnap, err := sandbox.SnapshotDir(shadowDir); err == nil {
-			changedFiles = sandbox.DiffSnapshots(preSnap, postSnap)
+	for{
+		if err := runtime.RunInteractive(ctx, shadowDir, agentCmd, assetDir, hardened); err != nil {
+			fmt.Printf("Agent runtime session interrupted: %v\n", err)
 		}
-	}
-	// Guardrail checks.
-	fmt.Println("\nInterception cycle complete. Running post-generation policy validations...")
-	allPassed := true
-	for _, check := range cfg.Checks {
-		fmt.Printf("Running guardrail: %s... ", check.CName)
-		output, checkErr := runtime.RunSilentCheck(ctx, shadowDir, []string{"sh", "-c", check.Command})
+		agentLabel := strings.Join(agentCmd, " ")
+		var changedFiles []string
+		if preSnap != nil {
+			if postSnap, err := sandbox.SnapshotDir(shadowDir); err == nil {
+				changedFiles = sandbox.DiffSnapshots(preSnap, postSnap)
+			}
+		}
+		// Guardrail checks.
+		fmt.Println("\nInterception cycle complete. Running post-generation policy validations...")
+		allPassed := true
+		var failures []string
+		for _, check := range cfg.Checks {
+			fmt.Printf("Running guardrail: %s... ", check.CName)
+			output, checkErr := runtime.RunSilentCheck(ctx, shadowDir, []string{"sh", "-c", check.Command})
 
-		// On Windows, POSIX-style guardrail commands (e.g. "touch /usr/bin/virus ||
-		// echo 'Safe: no files created'") get translated to cmd.exe which exits
-		// non-zero on POSIX syntax it doesn't understand — every check would falsely
-		// FAIL. Detect the "Safe:" sentinel that the || echo fallback emits, and treat
-		// its presence as a pass regardless of exit code.
-		if checkErr != nil && !strings.Contains(output, "Safe:") {
-			fmt.Printf("FAILED\nReason: Policy violation detected. Outbound block applied.\n")
-			fmt.Printf("Output: %s\n", strings.TrimSpace(output))
-			allPassed = false
+			// On Windows, POSIX-style guardrail commands (e.g. "touch /usr/bin/virus ||
+			// echo 'Safe: no files created'") get translated to cmd.exe which exits
+			// non-zero on POSIX syntax it doesn't understand — every check would falsely
+			// FAIL. Detect the "Safe:" sentinel that the || echo fallback emits, and treat
+			// its presence as a pass regardless of exit code.
+			if checkErr != nil && !strings.Contains(output, "Safe:") {
+				fmt.Printf("FAILED\nReason: Policy violation detected. Outbound block applied.\n")
+				failures = append(failures, check.CName)
+				allPassed = false
+			}
+		}
+
+		audit := Types.AuditEntry{
+			ID:        "proxy-" + filepath.Base(shadowDir), // Unique session trace string
+			TestPass:  allPassed,
+			Purpose:   purpose, // Tracks exactly what command the user typed for the agent
+			Agent:     agentLabel,
+			Files:     changedFiles, // Tracks string slice of every single added/modified file
+			BlockList: cfg.Blocks,
+			Overridden: false,
+		}
+		fmt.Println("\n--- NEURABOX AUDIT GATE ---")
+		if allPassed {
+			fmt.Println("Guardrails: ALL PASSED")
 			break
 		}
-		fmt.Println("✅")
-	}
-
-	audit := Types.AuditEntry{
-		ID:        "proxy-" + filepath.Base(shadowDir), // Unique session trace string
-		TestPass:  allPassed,
-		Approved:  false,
-		Purpose:   purpose, // Tracks exactly what command the user typed for the agent
-		Agent:     agentLabel,
-		Files:     changedFiles, // Tracks string slice of every single added/modified file
-		BlockList: cfg.Blocks,
-	}
-
-	if allPassed {
-		fmt.Println("\n--- NEURABOX AUDIT GATE ---")
-		fmt.Println("Guardrails: ALL PASSED")
-		if promptYN("do you want to see the git Diff?") {
-			cmd := exec.Command("git", "--no-pager", "diff", "--no-index", shadowDir, projectDir)
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			cmd.Run()
+		fmt.Println("\nNEURABOX GUARDRAIL VIOLATIONS DETECTED:")
+		if promptYN("Would you like to re-call the agent to auto-correct these violations?") {
+			// Inject the error context into the workspace so the agent reads it on retry
+			err := injectFailureContext(shadowDir, failures)
+			if err != nil {
+				fmt.Printf("Warning: failed to inject error context file: %v\n", err)
+			}
+			
+			fmt.Println("Spinning up agent retry loop with policy feedback...")
+			continue // Restarts the loop, re-executing the agent command inside shadowDir
 		}
-		if promptYN("Confirm export to your real project?") {
-			exported, _ := sandbox.ExportChangesTracked(shadowDir, projectDir, nil)
-			fmt.Println("Project updated")
-			audit.Approved = true
-			printInstallReminder(exported)
-		} else {
-			fmt.Println("Export canceled, shadow workspace discarded")
+
+		// 5. The Escape Hatch / Manual Override fallback
+		if promptYN("Do you want to manually override and keep the code anyway?") {
+			fmt.Println("⚠️ Manual override accepted. Proceeding to review stage...")
+			audit.TestPass = false
+			audit.Overridden = true
+			break // Break out of the loop to allow export
 		}
+
+		// If they don't want to retry and don't want to override, discard the session
+		fmt.Println("Export canceled, shadow workspace discarded.")
+		sandbox.AuditLog(&audit)
+		return
 	}
-	sandbox.AuditLog(&audit)
+	if promptYN("do you want to see the git Diff?") {
+		cmd := exec.Command("git", "--no-pager", "diff", "--no-index", shadowDir, projectDir)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Run()
+	}
+	if promptYN("Confirm export to your real project?") {
+		exported, _ := sandbox.ExportChangesTracked(shadowDir, projectDir, nil)
+		fmt.Println("Project updated")
+		printInstallReminder(exported)
+		return
+	} 
+	fmt.Println("Export canceled, shadow workspace discarded")
+		
+
 }
 
 // promptYN prints "[y/N]: " after the question and returns true only for "y"/"Y".
@@ -385,4 +311,20 @@ func stripOldNeuraboxBlock(content string) string {
 	}
 
 	return strings.TrimSpace(content)
+}
+func injectFailureContext(shadowDir string, failures []string) error {
+	filePath := filepath.Join(shadowDir, ".neurabox_failures.md")
+	
+	var sb strings.Builder
+	sb.WriteString("# CRITICAL: NEURABOX POLICY VIOLATION NOTICE\n\n")
+	sb.WriteString("Your last execution modified files in a way that violated system guardrails.\n")
+	sb.WriteString("You MUST correct these errors in your next turn to proceed:\n\n")
+	
+	for _, failure := range failures {
+		sb.WriteString(fmt.Sprintf("- [ ] **VIOLATION:** %s\n", failure))
+	}
+	
+	sb.WriteString("\nPlease analyze your previous modifications, fix the issues listed above, and remove this file once you comply.\n")
+
+	return os.WriteFile(filePath, []byte(sb.String()), 0644)
 }
