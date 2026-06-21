@@ -45,15 +45,8 @@ func Setup(assetDir, shadowDir string) error {
 		}
 	}
 
-	// 4. Local Initialization (CRITICAL FIX: Call rtkPath directly to preserve command routing)
-	initCmd := exec.Command(rtkPath, "init", "--local")
-	initCmd.Dir = shadowDir
-	initCmd.Env = append(os.Environ(), "RTK_NONINTERACTIVE=1")
-	if err := initCmd.Run(); err != nil {
-		fmt.Printf("Warning: rtk init --local failed: %v (metrics layer may run degraded)\n", err)
-	}
-
-	// 5. Build Metrics DB Path Structure
+	// 4. Build Metrics DB Path Structure
+	// We handle the database initialization natively here, bypassing the need for an external 'rtk init' command.
 	var dbPath string
 	if runtime.GOOS == "windows" {
 		dbPath = filepath.Join(os.Getenv("APPDATA"), "neurabox", "rtk_metrics.db")
