@@ -46,10 +46,16 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 			continue
 		}
 
+		// Preserve Git identity for sandbox commits, block path overrides
+		switch upper {
+		case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
+			"GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES":
+			continue
+		}
+
 		if strings.HasPrefix(upper, "VSCODE_") ||
 			strings.HasPrefix(upper, "ELECTRON_") ||
 			strings.HasPrefix(upper, "NPM_") ||
-			strings.HasPrefix(upper, "GIT_") ||
 			strings.HasPrefix(upper, "CLAUDE_") ||
 			strings.HasPrefix(upper, "GEMINI_") ||
 			strings.HasPrefix(upper, "AIDER_") {
@@ -89,10 +95,16 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 		Setpgid: true, // Assigns group ID matching the child PID
 	}
 
-	// Safe-guard cleanup: Terminate everything in the process group upon return
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("primitive ignition fault: %v", err)
+	}
+
+	// ⚠️ macOS limitation: Darwin lacks Pdeathsig. If Neurabox is killed via
+	// SIGKILL (kill -9), this defer will not run, leaving orphaned agents.
+	// This defer handles all normal exits and soft interrupts cleanly.
 	defer func() {
 		if cmd.Process != nil {
-			// Negative PID targets the entire process group under POSIX specifications
+			// Negative PID targets the entire process group
 			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		}
 	}()
@@ -103,10 +115,6 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 		return fmt.Errorf("failed to enter raw terminal mode: %v", err)
 	}
 	defer func() { _ = term.Restore(stdinFd, oldState) }()
-
-	if err = cmd.Start(); err != nil {
-		return fmt.Errorf("primitive ignition fault: %v", err)
-	}
 
 	err = cmd.Wait()
 	if err != nil && !strings.Contains(err.Error(), "exit status") {
