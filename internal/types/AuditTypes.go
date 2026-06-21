@@ -7,7 +7,7 @@ type AuditEntry struct {
 	Agent     string
 	BlockList []string
 	Files     []string
-	Approved  bool
 	TestPass  bool
+	Overridden bool
 	Timestamp string
 }
