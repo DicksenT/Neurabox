@@ -202,13 +202,6 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 	// Drop into raw mode as late as possible — just before we unblock the child —
 	// so the window where raw bytes could be misread is minimal.
 
-	
-	if err != nil {
-		_ = cmd.Process.Kill()
-		return fmt.Errorf("failed to enter raw terminal mode: %v", err)
-	}
-
-
 	if _, err = windows.ResumeThread(threadHandle); err != nil {
 		_ = cmd.Process.Kill()
 		return fmt.Errorf("failed to resume primary thread: %v", err)
