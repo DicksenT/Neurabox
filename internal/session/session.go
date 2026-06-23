@@ -95,7 +95,16 @@ func RunProxySession(agentCmd []string, hardened bool) {
 
 	auditLogPath := filepath.Join(projectDir, "audit.log")
 	WriteAgentContext(neuragraphPath, projectDir, shadowDir, auditLogPath, nil, cacheDir, agentCmd)
-
+	
+	// Map the initial shadow state to detect brand-new files later
+	initialShadowFiles := make(map[string]bool)
+	filepath.Walk(shadowDir, func(path string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() {
+			rel, _ := filepath.Rel(shadowDir, path)
+			initialShadowFiles[rel] = true
+		}
+		return nil
+	})
 	runtime := sandbox.NewPrimitiveEngine()
 	ctx := context.Background()
 
@@ -127,18 +136,49 @@ func RunProxySession(agentCmd []string, hardened bool) {
 		var failures []string
 		for _, check := range cfg.Checks {
 			fmt.Printf("Running guardrail: %s... ", check.CName)
+			
+			// output contains the exact stack trace, error logs, or stdout from the check
 			output, checkErr := runtime.RunSilentCheck(ctx, shadowDir, []string{"sh", "-c", check.Command})
 
-			// On Windows, POSIX-style guardrail commands (e.g. "touch /usr/bin/virus ||
-			// echo 'Safe: no files created'") get translated to cmd.exe which exits
-			// non-zero on POSIX syntax it doesn't understand — every check would falsely
-			// FAIL. Detect the "Safe:" sentinel that the || echo fallback emits, and treat
-			// its presence as a pass regardless of exit code.
 			if checkErr != nil && !strings.Contains(output, "Safe:") {
-				fmt.Printf("FAILED\nReason: Policy violation detected. Outbound block applied.\n")
-				failures = append(failures, check.CName)
+				fmt.Printf("FAILED\nReason: Policy violation detected.\n")
+				
+				// Clean up the output so it doesn't break markdown
+				cleanOutput := strings.TrimSpace(output)
+				if cleanOutput == "" {
+					cleanOutput = checkErr.Error()
+				}
+
+				// Bundle the rule name, the command that ran, AND the exact terminal output
+				richContext := fmt.Sprintf("**Rule:** %s\n  **Executed:** `%s`\n  **Terminal Trace:**\n  ```text\n  %s\n  ```", 
+					check.CName, check.Command, cleanOutput)
+				
+				failures = append(failures, richContext)
 				allPassed = false
 			}
+		}
+		fmt.Printf("Running guardrail: ghost-overwrite-protection... ")
+		collisionFound := false
+		for _, relPath := range changedFiles {
+			hostPath := filepath.Join(projectDir, relPath)
+			
+			// If the file was NOT in the shadow dir when we started...
+			if !initialShadowFiles[relPath] {
+				// ...but it ALREADY exists in the real host project...
+				if _, err := os.Stat(hostPath); err == nil {
+					// We caught a Ghost Overwrite!
+					collisionMsg := fmt.Sprintf("GHOST COLLISION: You tried to create '%s', but this file already exists in the host environment and is hidden for security. You MUST use a different filename.", relPath)
+					failures = append(failures, collisionMsg)
+					collisionFound = true
+					allPassed = false
+				}
+			}
+		}
+		
+		if collisionFound {
+			fmt.Printf("FAILED\nReason: Agent attempted to overwrite a hidden host file., please check or modify it\n")
+		} else {
+			fmt.Printf("Safe: No host collisions detected\n")
 		}
 
 		audit := Types.AuditEntry{
@@ -316,15 +356,17 @@ func injectFailureContext(shadowDir string, failures []string) error {
 	filePath := filepath.Join(shadowDir, ".neurabox_failures.md")
 	
 	var sb strings.Builder
-	sb.WriteString("# CRITICAL: NEURABOX POLICY VIOLATION NOTICE\n\n")
-	sb.WriteString("Your last execution modified files in a way that violated system guardrails.\n")
-	sb.WriteString("You MUST correct these errors in your next turn to proceed:\n\n")
+	sb.WriteString("# ⚠️ CRITICAL: NEURABOX POLICY VIOLATION NOTICE\n\n")
+	sb.WriteString("Your last execution failed one or more system guardrails or tests.\n")
+	sb.WriteString("You MUST analyze the terminal traces below and correct your code in the next turn:\n\n")
 	
-	for _, failure := range failures {
-		sb.WriteString(fmt.Sprintf("- [ ] **VIOLATION:** %s\n", failure))
+	for i, failure := range failures {
+		sb.WriteString(fmt.Sprintf("### Violation %d\n", i+1))
+		sb.WriteString(failure)
+		sb.WriteString("\n\n---\n\n") // Visual separator for multiple failures
 	}
 	
-	sb.WriteString("\nPlease analyze your previous modifications, fix the issues listed above, and remove this file once you comply.\n")
+	sb.WriteString("Please fix the issues listed above, and remove this file once you comply.\n")
 
 	return os.WriteFile(filePath, []byte(sb.String()), 0644)
 }
