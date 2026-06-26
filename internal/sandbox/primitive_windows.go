@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -148,6 +150,30 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_SUSPENDED,
 	}
 
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	
+	// 🚀 FIX: A dedicated channel to tell the goroutine we finished normally
+	doneChan := make(chan struct{}) 
+
+	go func() {
+		select {
+		case <-sigChan:
+			select {
+			case <-time.After(2 * time.Second):
+				// 🚀 THE GHOST WIPE: Added \033[r (Reset Scroll), \033[2K (Clear Line), and \033[J (Clear Below)
+				fmt.Print("\033[0m\033[?25h\033[?1049l\033[r\033[2K\033[J\n")
+				if cmd.Process != nil {
+					_ = cmd.Process.Kill()
+				}
+			case <-doneChan:
+				return
+			}
+		case <-doneChan:
+			return
+		}
+	}()
+
 	if err = cmd.Start(); err != nil {
 		return fmt.Errorf("primitive ignition fault: %v", err)
 	}
@@ -207,6 +233,11 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 		return fmt.Errorf("failed to resume primary thread: %v", err)
 	}
 	err = cmd.Wait()
+
+	close(doneChan)
+	signal.Stop(sigChan)
+	fmt.Print("\033[0m\033[?25h\033[?1049l\033[r\033[2K\033[J\n")
+	
 	if err != nil && !strings.Contains(err.Error(), "exit status") {
 		return err
 	}

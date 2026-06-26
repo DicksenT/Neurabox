@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/term"
 )
@@ -33,6 +35,7 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 	cmd.Dir = workingDir
 
 	// --- Environment assembly ---
+	// --- Environment assembly ---
 	var cleanEnv []string
 	for _, env := range os.Environ() {
 		key := env
@@ -47,11 +50,17 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 			continue
 		}
 
-		// OBLITERATE host-context, IDE sockets, and AI Memory Trackers
+		// 🚀 FIX: Preserve Git identity for sandbox commits, but block dangerous path overrides
+		switch upper {
+		case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
+			"GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES":
+			continue
+		}
+
+		// OBLITERATE host-context, IDE sockets, and AI Memory Trackers (Removed GIT_ from here)
 		if strings.HasPrefix(upper, "VSCODE_") ||
 			strings.HasPrefix(upper, "ELECTRON_") ||
 			strings.HasPrefix(upper, "NPM_") ||
-			strings.HasPrefix(upper, "GIT_") ||
 			strings.HasPrefix(upper, "CLAUDE_") ||
 			strings.HasPrefix(upper, "GEMINI_") ||
 			strings.HasPrefix(upper, "AIDER_") {
@@ -61,7 +70,6 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 		cleanEnv = append(cleanEnv, env)
 	}
 
-	// Re-add controlled variables. Note the POSIX colon (:) separator for PATH.
 	rtkDB := os.Getenv("RTK_DB_PATH")
 	cleanEnv = append(cleanEnv,
 		fmt.Sprintf("PATH=%s:%s", assetDir, os.Getenv("PATH")),
@@ -82,7 +90,6 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 		)
 	}
 	cmd.Env = cleanEnv
-
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -93,7 +100,7 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 		Pdeathsig: syscall.SIGKILL, // Kills child processes instantly if Neurabox dies
 	}
 
-	// Capture terminal state and transition safely to raw terminal mode
+	// Capture terminal state
 	stdinFd := int(os.Stdin.Fd())
 	oldState, err := term.MakeRaw(stdinFd)
 	if err != nil {
@@ -101,11 +108,46 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 	}
 	defer func() { _ = term.Restore(stdinFd, oldState) }()
 
+	// --- The POSIX Interceptor & Ghost Wipe ---
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	doneChan := make(chan struct{})
+
+	go func() {
+		select {
+		case <-sigChan:
+			// Forward graceful SIGINT to the isolated process group
+			if cmd.Process != nil {
+				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGINT)
+			}
+			select {
+			case <-time.After(2 * time.Second):
+				// TUI is frozen. Execute Ghost Wipe and drop the hammer.
+				fmt.Print("\033[0m\033[?25h\033[?1049l\033[r\033[2K\033[J\n")
+				if cmd.Process != nil {
+					_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+				}
+			case <-doneChan:
+				return
+			}
+		case <-doneChan:
+			return
+		}
+	}()
+
 	if err = cmd.Start(); err != nil {
 		return fmt.Errorf("primitive ignition fault: %v", err)
 	}
 
 	err = cmd.Wait()
+
+	// Cleanup Interceptor
+	close(doneChan)
+	signal.Stop(sigChan)
+
+	// Unconditional Ghost Wipe
+	fmt.Print("\033[0m\033[?25h\033[?1049l\033[r\033[2K\033[J\n")
+
 	if err != nil && !strings.Contains(err.Error(), "exit status") {
 		return err
 	}
@@ -113,7 +155,6 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 }
 
 func (p *PrimitiveEngine) RunSilentCheck(ctx context.Context, workingDir string, command []string) (string, error) {
-	// Native POSIX handles 'sh -c' directly. No translation required.
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 	cmd.Dir = workingDir
 	out, err := cmd.CombinedOutput()

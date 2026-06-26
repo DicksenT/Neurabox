@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/term"
 )
@@ -46,7 +48,6 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 			continue
 		}
 
-		// Preserve Git identity for sandbox commits, block path overrides
 		switch upper {
 		case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
 			"GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES":
@@ -85,29 +86,14 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 		)
 	}
 	cmd.Env = cleanEnv
-
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
 	// --- Native macOS Process Group Isolation ---
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true, // Assigns group ID matching the child PID
+		Setpgid: true, 
 	}
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("primitive ignition fault: %v", err)
-	}
-
-	// ⚠️ macOS limitation: Darwin lacks Pdeathsig. If Neurabox is killed via
-	// SIGKILL (kill -9), this defer will not run, leaving orphaned agents.
-	// This defer handles all normal exits and soft interrupts cleanly.
-	defer func() {
-		if cmd.Process != nil {
-			// Negative PID targets the entire process group
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		}
-	}()
 
 	stdinFd := int(os.Stdin.Fd())
 	oldState, err := term.MakeRaw(stdinFd)
@@ -116,7 +102,53 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 	}
 	defer func() { _ = term.Restore(stdinFd, oldState) }()
 
+	// --- The POSIX Interceptor & Ghost Wipe ---
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	doneChan := make(chan struct{})
+
+	go func() {
+		select {
+		case <-sigChan:
+			// Forward graceful SIGINT to the isolated process group
+			if cmd.Process != nil {
+				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGINT)
+			}
+			select {
+			case <-time.After(2 * time.Second):
+				// TUI is frozen. Execute Ghost Wipe and drop the hammer.
+				fmt.Print("\033[0m\033[?25h\033[?1049l\033[r\033[2K\033[J\n")
+				if cmd.Process != nil {
+					_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+				}
+			case <-doneChan:
+				return
+			}
+		case <-doneChan:
+			return
+		}
+	}()
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("primitive ignition fault: %v", err)
+	}
+
+	// macOS fail-safe: Kill entire process group on normal exit just in case
+	defer func() {
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+	}()
+
 	err = cmd.Wait()
+
+	// Cleanup Interceptor
+	close(doneChan)
+	signal.Stop(sigChan)
+
+	// Unconditional Ghost Wipe
+	fmt.Print("\033[0m\033[?25h\033[?1049l\033[r\033[2K\033[J\n")
+
 	if err != nil && !strings.Contains(err.Error(), "exit status") {
 		return err
 	}
