@@ -1,9 +1,11 @@
 package sandbox
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -160,9 +162,16 @@ func exportChanges(sourceDir string, targetDir string, blockList []string) ([]st
 
 		// Skip heavy and blocked directories entirely.
 		if info.IsDir() {
-			if slices.Contains(heavyDirs, name) || slices.Contains(blockList, name) {
+			if slices.Contains(blockList, name) {
 				fmt.Printf(" Skipping dir: %s\n", relPath)
 				return filepath.SkipDir
+			}
+			if slices.Contains(heavyDirs, name) {
+				targetPath := filepath.Join(pDir, relPath)
+				if _, statErr := os.Stat(targetPath); os.IsNotExist(statErr) {
+					fmt.Printf("Linking heavy dir: %s\n", relPath)
+					_ = createSymlink(path, targetPath)
+				}
 			}
 			_ = os.MkdirAll(filepath.Join(pDir, relPath), 0755)
 			return nil
@@ -172,7 +181,7 @@ func exportChanges(sourceDir string, targetDir string, blockList []string) ([]st
 		if strings.HasSuffix(name, ".exe") || name == "audit.log" || slices.Contains(blockList, name) ||
 			name == ".claudeignore" || name == ".aiderignore" || name == ".cursorignore" ||
 			name == ".copilotignore" || name == ".codeiumignore" || name == ".ignore" || name == "nb-graph" || name == "AI_CONTEXT.md" || name == "graph.json" {
-			return nil // 🚀 Spared! This stays inside the shadow directory and is never synced back to the host.
+			return nil // Spared! This stays inside the shadow directory and is never synced back to the host.
 		}
 		targetPath := filepath.Join(pDir, relPath)
 
@@ -212,5 +221,24 @@ func CopyFile(srcPath, dstPath string, mode os.FileMode) error {
 	defer dst.Close()
 
 	_, err = io.Copy(dst, src)
+	return err
+}
+
+// createSymlink attempts to create a directory symlink.
+// On Windows, it falls back to a Junction point if standard symlinks fail.
+func createSymlink(src string, dst string) error {
+	err := os.Symlink(src, dst)
+	
+	// If Symlink fails (common on Windows without Developer Mode), use mklink /J
+	if err != nil {
+		isContainPriv := strings.Contains(strings.ToLower(err.Error()), "privilege")
+
+		var pathError *os.PathError
+		isPathError := errors.As(err, &pathError)
+		if isContainPriv || isPathError {
+			cmd := exec.Command("cmd", "/c", "mklink", "/J", dst, src)
+			return cmd.Run()
+		}
+	}
 	return err
 }
