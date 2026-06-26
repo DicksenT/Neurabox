@@ -13,13 +13,15 @@ import (
 // agentContextFiles maps agent name patterns to the filename they auto-read
 // on startup. Written by graphify_ast.py directly into shadowDir.
 var agentContextFiles = map[string]string{
-	"claude":  "CLAUDE.md",
-	"gemini":  "GEMINI.md",
-	"aider":   ".aider.md",
-	"cursor":  ".cursorrules",
-	"default": "AI_CONTEXT.md",
+    "claude":    "CLAUDE.md",
+    "gemini":    "GEMINI.md",
+    "aider":     ".aider.md",
+    "cursor":    ".cursorrules",
+    "copilot":   ".github/copilot-instructions.md",
+    "cline":     ".clinerules",
+    "windsurf":  ".windsurfrules",
+    "default":   "AGENTS.md",  // OpenAI standard, most new agents adopt this
 }
-
 // WriteAgentContext runs neuragraph.exe (PyInstaller-packaged graphify_ast.py)
 // which writes CLAUDE.md, GEMINI.md, .aider.md, and AI_CONTEXT.md directly
 // into shadowDir. No stdout capture — the binary handles file writing itself.
@@ -38,9 +40,8 @@ func WriteAgentContext(
 	auditLogPath string,
 	changedFiles []string,
 	cacheDir string,
-	agentCmd []string,
+	agentCmd []string, // We use this to detect the agent!
 ) {
-	// Write changed files to a temp file for the Python script to read.
 	var changedFilePath string
 	if len(changedFiles) > 0 {
 		tf, err := os.CreateTemp("", "nb-changed-*.txt")
@@ -52,10 +53,22 @@ func WriteAgentContext(
 		}
 	}
 
-	// graphify_ast.py CLI: <project_dir> <shadow_dir> [--audit-log x] [--changed x]
-	// Note: no --cache-dir flag — cacheDir is passed as GRAPHIFY_OUT env var.
+	// 1. Detect which agent is being used
+	cmdString := strings.ToLower(strings.Join(agentCmd, " "))
+	targetFile := agentContextFiles["default"] // Defaults to AI_CONTEXT.md
+	
+	for key, filename := range agentContextFiles {
+		if strings.Contains(cmdString, key) && key != "default" {
+			targetFile = filename
+			break
+		}
+	}
+
 	fmt.Printf("Running neuragraph on projectDir: %s\n", projectDir)
-	args := []string{projectDir, shadowDir, "--debug"}
+	
+	// 2. Pass the specific target file to the Python binary
+	args := []string{projectDir, shadowDir, "--target-file", targetFile, "--debug"}
+	
 	if auditLogPath != "" {
 		args = append(args, "--audit-log", auditLogPath)
 	}
@@ -69,40 +82,31 @@ func WriteAgentContext(
 	cmd := exec.CommandContext(ctx, neuragraphBinPath, args...)
 	cmd.Dir = projectDir
 
-	// BUG FIX 1: cacheDir goes as GRAPHIFY_OUT env var, not a CLI flag.
-	// graphify_ast.py reads os.environ["GRAPHIFY_OUT"] to locate its cache.
 	if cacheDir != "" {
 		cmd.Env = append(os.Environ(), fmt.Sprintf("GRAPHIFY_OUT=%s", cacheDir))
 	}
 
-	// Capture stderr for diagnostics only. stdout is not used — the binary
-	// writes files directly into shadowDir (BUG FIX 2: no stdout capture).
 	var stderrBuf strings.Builder
 	cmd.Stderr = &stderrBuf
 
 	runErr := cmd.Run()
 
 	if ctx.Err() == context.DeadlineExceeded {
-		fmt.Println("⚠️  Context generation timed out — agent will start without project context.")
+		fmt.Println(" Context generation timed out — agent will start without project context.")
 		return
 	}
 	if runErr != nil {
-		fmt.Printf("⚠️  Context generation failed: %v\n", runErr)
+		fmt.Printf("  Context generation failed: %v\n", runErr)
 		if stderrBuf.Len() > 0 {
 			fmt.Printf("Details: %s\n", strings.TrimSpace(stderrBuf.String()))
 		}
 		return
 	}
 
-	// Confirm which files actually landed in shadowDir.
-	var written []string
-	for _, name := range []string{"CLAUDE.md", "GEMINI.md", ".aider.md", "AI_CONTEXT.md"} {
-		if info, err := os.Stat(filepath.Join(shadowDir, name)); err == nil {
-			written = append(written, fmt.Sprintf("%s (~%d tokens)", name, int(info.Size())/4))
-		}
-	}
-	if len(written) > 0 {
-		fmt.Printf("📖 Context injected: [%s]\n", strings.Join(written, ", "))
+	// 3. Confirm only the targeted file landed in the shadow directory
+	if info, err := os.Stat(filepath.Join(shadowDir, targetFile)); err == nil {
+		tokens := int(info.Size()) / 4
+		fmt.Printf("📖 Context injected: [%s (~%d tokens)]\n", targetFile, tokens)
 	} else {
 		fmt.Println("⚠️  Context generator ran but wrote no files — agent starts without context.")
 	}
