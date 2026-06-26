@@ -43,7 +43,7 @@ checks:
 func main() {
 	// 1. Configure modern usage menu optimized purely for Agents
 	flag.Usage = func() {
-		fmt.Println("🛡️  Neurabox AI Agent Sandbox Proxy")
+		fmt.Println("  Neurabox AI Agent Sandbox Proxy")
 		fmt.Println("\nUsage:")
 		fmt.Println("  neurabox [flags] <agent-command> [args...]")
 		fmt.Println("  neurabox [flags] -- <agent-command> [args...]")
