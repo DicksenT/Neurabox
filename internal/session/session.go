@@ -68,12 +68,12 @@ func RunProxySession(agentCmd []string, hardened bool) {
 		}
 	}
 
-	// BUG FIX 6: project-specific cache so multiple projects don't share a cache.
+	// BUG FIX : project-specific cache so multiple projects don't share a cache.
 	projHash := fmt.Sprintf("%x", md5Hash(projectDir))[:8]
 	cacheDir := filepath.Join(os.Getenv("APPDATA"), "neurabox", "neuragraph-cache", projHash)
 	_ = os.MkdirAll(cacheDir, 0755)
 
-	// BUG FIX 4: use bufio.Scanner so multi-word input like
+	// BUG FIX : use bufio.Scanner so multi-word input like
 	// "add login function" isn't truncated to "add" by fmt.Scan.
 	fmt.Print("What is the purpose of this session? ")
 	scanner := bufio.NewScanner(os.Stdin)
@@ -112,12 +112,10 @@ func RunProxySession(agentCmd []string, hardened bool) {
 	openCmd := exec.Command("cmd.exe", "/c", "code", shadowDir)
 	_ = openCmd.Start()
 
-	// Single grouped defer — all cleanup in explicit order.
-	// gainCmd must run BEFORE assetDir is deleted (rtkPath lives inside it).
 	defer func() {
 		_ = runtime.Destroy(ctx)
 		os.RemoveAll(shadowDir)
-		os.RemoveAll(assetDir) // last — after gainCmd finished using rtkPath
+		os.RemoveAll(assetDir) 
 	}()
 	for{
 		if err := runtime.RunInteractive(ctx, shadowDir, agentCmd, assetDir, hardened); err != nil {
@@ -209,7 +207,7 @@ func RunProxySession(agentCmd []string, hardened bool) {
 
 		// 5. The Escape Hatch / Manual Override fallback
 		if promptYN("Do you want to manually override and keep the code anyway?") {
-			fmt.Println("⚠️ Manual override accepted. Proceeding to review stage...")
+			fmt.Println(" Manual override accepted. Proceeding to review stage...")
 			audit.TestPass = false
 			audit.Overridden = true
 			break // Break out of the loop to allow export
