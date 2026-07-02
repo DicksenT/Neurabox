@@ -79,7 +79,6 @@ func RunProxySession(agentCmd []string, hardened bool) {
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Scan()
 	purpose := strings.TrimSpace(scanner.Text())
-
 	sandbox.ExportChanges(projectDir, shadowDir, cfg.Blocks)
 
 	// BUG FIX 3: injectAgentBlindfolds must run AFTER ExportChanges so the
@@ -111,6 +110,16 @@ func RunProxySession(agentCmd []string, hardened bool) {
 	fmt.Println("Launching isolated shadow workspace view")
 	openCmd := exec.Command("cmd.exe", "/c", "code", shadowDir)
 	_ = openCmd.Start()
+
+	if isGit := sandbox.IsGitRepo(); !isGit{
+		fmt.Printf("this code is not in git, cannot save code for revert")
+		gitAsk := promptYN("do you want init git for save pre-session code?")
+		if gitAsk{
+			exec.Command("git", "init")
+		}
+	} else if err := sandbox.SaveSnapshot(); err != nil{
+		fmt.Printf("failed to save current code (for revert)")
+	}
 
 	defer func() {
 		_ = runtime.Destroy(ctx)
