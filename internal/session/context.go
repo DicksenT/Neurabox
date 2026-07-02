@@ -106,8 +106,8 @@ func WriteAgentContext(
 	// 3. Confirm only the targeted file landed in the shadow directory
 	if info, err := os.Stat(filepath.Join(shadowDir, targetFile)); err == nil {
 		tokens := int(info.Size()) / 4
-		fmt.Printf("📖 Context injected: [%s (~%d tokens)]\n", targetFile, tokens)
+		fmt.Printf(" Context injected: [%s (~%d tokens)]\n", targetFile, tokens)
 	} else {
-		fmt.Println("⚠️  Context generator ran but wrote no files — agent starts without context.")
+		fmt.Println(" Context generator ran but wrote no files — agent starts without context.")
 	}
 }

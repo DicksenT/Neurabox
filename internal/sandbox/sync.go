@@ -131,9 +131,9 @@ func exportChanges(sourceDir string, targetDir string, blockList []string) ([]st
 
 		srcPath := filepath.Join(sDir, relPath)
 		if _, err := os.Stat(srcPath); os.IsNotExist(err) {
-			fmt.Printf("🗑️  Deleting: %s\n", relPath)
+			fmt.Printf("  Deleting: %s\n", relPath)
 			if removeErr := os.RemoveAll(path); removeErr != nil {
-				fmt.Printf("⚠️  Could not delete %s: %v\n", relPath, removeErr)
+				fmt.Printf("  Could not delete %s: %v\n", relPath, removeErr)
 			} else {
 				changed = append(changed, relPath+" (deleted)")
 			}
@@ -193,9 +193,9 @@ func exportChanges(sourceDir string, targetDir string, blockList []string) ([]st
 			}
 		}
 
-		fmt.Printf("📝 Syncing: %s\n", relPath)
+		fmt.Printf(" Syncing: %s\n", relPath)
 		if copyErr := CopyFile(path, targetPath, info.Mode()); copyErr != nil {
-			fmt.Printf("⚠️  Skipped %s: %v\n", relPath, copyErr)
+			fmt.Printf(" Skipped %s: %v\n", relPath, copyErr)
 		} else {
 			changed = append(changed, relPath)
 		}
