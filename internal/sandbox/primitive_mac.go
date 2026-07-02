@@ -18,7 +18,7 @@ import (
 type PrimitiveEngine struct{}
 
 func NewPrimitiveEngine() *PrimitiveEngine {
-	fmt.Println("🚀 Using Native macOS Primitive Isolation (Zero Dependency Mode)")
+	fmt.Println(" Using Native macOS Primitive Isolation (Zero Dependency Mode)")
 	return &PrimitiveEngine{}
 }
 

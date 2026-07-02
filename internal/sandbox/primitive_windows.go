@@ -19,7 +19,7 @@ import (
 type PrimitiveEngine struct{}
 
 func NewPrimitiveEngine() *PrimitiveEngine {
-	fmt.Println("🚀 Using Native Windows Primitive Isolation (Zero Dependency Mode)")
+	fmt.Println(" Using Native Windows Primitive Isolation (Zero Dependency Mode)")
 	return &PrimitiveEngine{}
 }
 

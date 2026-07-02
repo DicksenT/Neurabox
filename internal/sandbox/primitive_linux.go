@@ -18,7 +18,7 @@ import (
 type PrimitiveEngine struct{}
 
 func NewPrimitiveEngine() *PrimitiveEngine {
-	fmt.Println("🚀 Using Native Linux Primitive Isolation (Zero Dependency Mode)")
+	fmt.Println(" Using Native Linux Primitive Isolation (Zero Dependency Mode)")
 	return &PrimitiveEngine{}
 }
 
@@ -50,7 +50,7 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 			continue
 		}
 
-		// 🚀 FIX: Preserve Git identity for sandbox commits, but block dangerous path overrides
+		//  FIX: Preserve Git identity for sandbox commits, but block dangerous path overrides
 		switch upper {
 		case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
 			"GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES":
