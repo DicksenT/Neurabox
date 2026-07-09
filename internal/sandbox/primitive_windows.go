@@ -152,9 +152,9 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	
+
 	// 🚀 FIX: A dedicated channel to tell the goroutine we finished normally
-	doneChan := make(chan struct{}) 
+	doneChan := make(chan struct{})
 
 	go func() {
 		select {
@@ -237,7 +237,7 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 	close(doneChan)
 	signal.Stop(sigChan)
 	fmt.Print("\033[0m\033[?25h\033[?1049l\033[r\033[2K\033[J\n")
-	
+
 	if err != nil && !strings.Contains(err.Error(), "exit status") {
 		return err
 	}

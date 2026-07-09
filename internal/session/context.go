@@ -13,15 +13,16 @@ import (
 // agentContextFiles maps agent name patterns to the filename they auto-read
 // on startup. Written by graphify_ast.py directly into shadowDir.
 var agentContextFiles = map[string]string{
-    "claude":    "CLAUDE.md",
-    "gemini":    "GEMINI.md",
-    "aider":     ".aider.md",
-    "cursor":    ".cursorrules",
-    "copilot":   ".github/copilot-instructions.md",
-    "cline":     ".clinerules",
-    "windsurf":  ".windsurfrules",
-    "default":   "AGENTS.md",  // OpenAI standard, most new agents adopt this
+	"claude":   "CLAUDE.md",
+	"gemini":   "GEMINI.md",
+	"aider":    ".aider.md",
+	"cursor":   ".cursorrules",
+	"copilot":  ".github/copilot-instructions.md",
+	"cline":    ".clinerules",
+	"windsurf": ".windsurfrules",
+	"default":  "AGENTS.md", // OpenAI standard, most new agents adopt this
 }
+
 // WriteAgentContext runs neuragraph.exe (PyInstaller-packaged graphify_ast.py)
 // which writes CLAUDE.md, GEMINI.md, .aider.md, and AI_CONTEXT.md directly
 // into shadowDir. No stdout capture — the binary handles file writing itself.
@@ -56,7 +57,7 @@ func WriteAgentContext(
 	// 1. Detect which agent is being used
 	cmdString := strings.ToLower(strings.Join(agentCmd, " "))
 	targetFile := agentContextFiles["default"] // Defaults to AI_CONTEXT.md
-	
+
 	for key, filename := range agentContextFiles {
 		if strings.Contains(cmdString, key) && key != "default" {
 			targetFile = filename
@@ -65,10 +66,10 @@ func WriteAgentContext(
 	}
 
 	fmt.Printf("Running neuragraph on projectDir: %s\n", projectDir)
-	
+
 	// 2. Pass the specific target file to the Python binary
 	args := []string{projectDir, shadowDir, "--target-file", targetFile, "--debug"}
-	
+
 	if auditLogPath != "" {
 		args = append(args, "--audit-log", auditLogPath)
 	}

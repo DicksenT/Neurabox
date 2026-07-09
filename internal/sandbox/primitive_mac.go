@@ -92,7 +92,7 @@ func (p *PrimitiveEngine) RunInteractive(ctx context.Context, workingDir string,
 
 	// --- Native macOS Process Group Isolation ---
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true, 
+		Setpgid: true,
 	}
 
 	stdinFd := int(os.Stdin.Fd())

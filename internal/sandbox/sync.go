@@ -228,7 +228,7 @@ func CopyFile(srcPath, dstPath string, mode os.FileMode) error {
 // On Windows, it falls back to a Junction point if standard symlinks fail.
 func createSymlink(src string, dst string) error {
 	err := os.Symlink(src, dst)
-	
+
 	// If Symlink fails (common on Windows without Developer Mode), use mklink /J
 	if err != nil {
 		isContainPriv := strings.Contains(strings.ToLower(err.Error()), "privilege")

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"bufio"
 	"crypto/md5"
@@ -36,6 +37,17 @@ func RunProxySession(agentCmd []string, hardened bool) {
 	shadowDir, err := os.MkdirTemp("", "nb-proxy-*")
 	if err != nil {
 		log.Fatal(err)
+	}
+	var currentWorktreePath string
+	if promptYN("do you want to use worktree?") {
+		sessionID := fmt.Sprintf("%d", time.Now().UnixNano())
+		// Create worktree instead of shadow copy
+		worktreeDir, err := sandbox.CreateSessionWorktree(projectDir, sessionID)
+		if err != nil {
+			log.Fatalf("Failed to create session worktree: %v", err)
+		}
+		currentWorktreePath = shadowDir
+		shadowDir = worktreeDir
 	}
 
 	assetDir, err := os.MkdirTemp("", "nb-assets-*")
@@ -94,7 +106,7 @@ func RunProxySession(agentCmd []string, hardened bool) {
 
 	auditLogPath := filepath.Join(projectDir, "audit.log")
 	WriteAgentContext(neuragraphPath, projectDir, shadowDir, auditLogPath, nil, cacheDir, agentCmd)
-	
+
 	// Map the initial shadow state to detect brand-new files later
 	initialShadowFiles := make(map[string]bool)
 	filepath.Walk(shadowDir, func(path string, info os.FileInfo, err error) error {
@@ -111,22 +123,18 @@ func RunProxySession(agentCmd []string, hardened bool) {
 	openCmd := exec.Command("cmd.exe", "/c", "code", shadowDir)
 	_ = openCmd.Start()
 
-	if isGit := sandbox.IsGitRepo(); !isGit{
-		fmt.Printf("this code is not in git, cannot save code for revert")
-		gitAsk := promptYN("do you want init git for save pre-session code?")
-		if gitAsk{
-			exec.Command("git", "init")
-		}
-	} else if err := sandbox.SaveSnapshot(); err != nil{
-		fmt.Printf("failed to save current code (for revert)")
-	}
-
 	defer func() {
 		_ = runtime.Destroy(ctx)
 		os.RemoveAll(shadowDir)
-		os.RemoveAll(assetDir) 
+		os.RemoveAll(assetDir)
+		if err := sandbox.RemoveSessionWorktree(currentWorktreePath); err != nil {
+			fmt.Printf("⚠️ Warning: Failed to clean up worktree: %v\n", err)
+			fmt.Printf("   Manual cleanup: git worktree remove -f %s\n", currentWorktreePath)
+		} else {
+			fmt.Println("✅ Session worktree cleaned up")
+		}
 	}()
-	for{
+	for {
 		if err := runtime.RunInteractive(ctx, shadowDir, agentCmd, assetDir, hardened); err != nil {
 			fmt.Printf("Agent runtime session interrupted: %v\n", err)
 		}
@@ -143,13 +151,13 @@ func RunProxySession(agentCmd []string, hardened bool) {
 		var failures []string
 		for _, check := range cfg.Checks {
 			fmt.Printf("Running guardrail: %s... ", check.CName)
-			
+
 			// output contains the exact stack trace, error logs, or stdout from the check
 			output, checkErr := runtime.RunSilentCheck(ctx, shadowDir, []string{"sh", "-c", check.Command})
 
 			if checkErr != nil && !strings.Contains(output, "Safe:") {
 				fmt.Printf("FAILED\nReason: Policy violation detected.\n")
-				
+
 				// Clean up the output so it doesn't break markdown
 				cleanOutput := strings.TrimSpace(output)
 				if cleanOutput == "" {
@@ -157,9 +165,9 @@ func RunProxySession(agentCmd []string, hardened bool) {
 				}
 
 				// Bundle the rule name, the command that ran, AND the exact terminal output
-				richContext := fmt.Sprintf("**Rule:** %s\n  **Executed:** `%s`\n  **Terminal Trace:**\n  ```text\n  %s\n  ```", 
+				richContext := fmt.Sprintf("**Rule:** %s\n  **Executed:** `%s`\n  **Terminal Trace:**\n  ```text\n  %s\n  ```",
 					check.CName, check.Command, cleanOutput)
-				
+
 				failures = append(failures, richContext)
 				allPassed = false
 			}
@@ -168,7 +176,7 @@ func RunProxySession(agentCmd []string, hardened bool) {
 		collisionFound := false
 		for _, relPath := range changedFiles {
 			hostPath := filepath.Join(projectDir, relPath)
-			
+
 			// If the file was NOT in the shadow dir when we started...
 			if !initialShadowFiles[relPath] {
 				// ...but it ALREADY exists in the real host project...
@@ -181,7 +189,7 @@ func RunProxySession(agentCmd []string, hardened bool) {
 				}
 			}
 		}
-		
+
 		if collisionFound {
 			fmt.Printf("FAILED\nReason: Agent attempted to overwrite a hidden host file., please check or modify it\n")
 		} else {
@@ -189,12 +197,12 @@ func RunProxySession(agentCmd []string, hardened bool) {
 		}
 
 		audit := Types.AuditEntry{
-			ID:        "proxy-" + filepath.Base(shadowDir), // Unique session trace string
-			TestPass:  allPassed,
-			Purpose:   purpose, // Tracks exactly what command the user typed for the agent
-			Agent:     agentLabel,
-			Files:     changedFiles, // Tracks string slice of every single added/modified file
-			BlockList: cfg.Blocks,
+			ID:         "proxy-" + filepath.Base(shadowDir), // Unique session trace string
+			TestPass:   allPassed,
+			Purpose:    purpose, // Tracks exactly what command the user typed for the agent
+			Agent:      agentLabel,
+			Files:      changedFiles, // Tracks string slice of every single added/modified file
+			BlockList:  cfg.Blocks,
 			Overridden: false,
 		}
 		fmt.Println("\n--- NEURABOX AUDIT GATE ---")
@@ -209,7 +217,7 @@ func RunProxySession(agentCmd []string, hardened bool) {
 			if err != nil {
 				fmt.Printf("Warning: failed to inject error context file: %v\n", err)
 			}
-			
+
 			fmt.Println("Spinning up agent retry loop with policy feedback...")
 			continue // Restarts the loop, re-executing the agent command inside shadowDir
 		}
@@ -238,9 +246,8 @@ func RunProxySession(agentCmd []string, hardened bool) {
 		fmt.Println("Project updated")
 		printInstallReminder(exported)
 		return
-	} 
+	}
 	fmt.Println("Export canceled, shadow workspace discarded")
-		
 
 }
 
@@ -361,18 +368,18 @@ func stripOldNeuraboxBlock(content string) string {
 }
 func injectFailureContext(shadowDir string, failures []string) error {
 	filePath := filepath.Join(shadowDir, ".neurabox_failures.md")
-	
+
 	var sb strings.Builder
 	sb.WriteString("# ⚠️ CRITICAL: NEURABOX POLICY VIOLATION NOTICE\n\n")
 	sb.WriteString("Your last execution failed one or more system guardrails or tests.\n")
 	sb.WriteString("You MUST analyze the terminal traces below and correct your code in the next turn:\n\n")
-	
+
 	for i, failure := range failures {
 		sb.WriteString(fmt.Sprintf("### Violation %d\n", i+1))
 		sb.WriteString(failure)
 		sb.WriteString("\n\n---\n\n") // Visual separator for multiple failures
 	}
-	
+
 	sb.WriteString("Please fix the issues listed above, and remove this file once you comply.\n")
 
 	return os.WriteFile(filePath, []byte(sb.String()), 0644)

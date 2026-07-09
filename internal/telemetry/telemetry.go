@@ -12,11 +12,11 @@ import (
 )
 
 type PingPayload struct {
-	UserHash  string `json:"user_hash"`  // Cryptographically masked OS GUID
-	OS        string `json:"os"`         // darwin, linux, windows
-	Arch      string `json:"arch"`       // amd64, arm64
-	Version   string `json:"version"`    // App version (e.g., 0.1.4)
-	Event     string `json:"event"`      // "heartbeat" or "run"
+	UserHash string `json:"user_hash"` // Cryptographically masked OS GUID
+	OS       string `json:"os"`        // darwin, linux, windows
+	Arch     string `json:"arch"`      // amd64, arm64
+	Version  string `json:"version"`   // App version (e.g., 0.1.4)
+	Event    string `json:"event"`     // "heartbeat" or "run"
 }
 
 // FireBackgroundPing sends an anonymous heartbeat without blocking agent execution
@@ -29,11 +29,11 @@ func FireBackgroundPing(version string, eventType string) {
 		}
 
 		payload := PingPayload{
-			UserHash:  userHash,
-			OS:        runtime.GOOS,
-			Arch:      runtime.GOARCH,
-			Version:   version,
-			Event:     eventType,
+			UserHash: userHash,
+			OS:       runtime.GOOS,
+			Arch:     runtime.GOARCH,
+			Version:  version,
+			Event:    eventType,
 		}
 
 		jsonData, err := json.Marshal(payload)
