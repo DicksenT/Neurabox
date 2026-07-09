@@ -10,15 +10,6 @@ import (
 )
 
 const defaultPolicy = `
-version: "0.1"
-image: "node:20-alpine"
-mounts:
-  - source: "."
-    target: "/workspace"
-    mode: "ro"
-  - source: "./src"
-    target: "/workspace/src"
-    mode: "rw"
 # files to block from agent visibility
 blocks:
   - ".env"
@@ -63,10 +54,10 @@ func main() {
 	if *initCmd {
 		err := os.WriteFile("nb-policy.yaml", []byte(strings.TrimSpace(defaultPolicy)), 0644)
 		if err != nil {
-			fmt.Printf("❌ Error initializing policy: %v\n", err)
+			fmt.Printf(" Error initializing policy: %v\n", err)
 			return
 		}
-		fmt.Println("✨ Initialized nb-policy.yaml successfully. Customize your guardrails before running your agent!")
+		fmt.Println(" Initialized nb-policy.yaml successfully. Customize your guardrails before running your agent!")
 		return
 	}
 
@@ -74,25 +65,17 @@ func main() {
 	// Go's flag package automatically stops at the first non-flag argument,
 	// meaning everything intended for the agent falls gracefully into flag.Args().
 	args := flag.Args()
-
-	// If the user used an explicit "--" separator, strip it out cleanly
-	if len(args) > 0 && args[0] == "--" {
-		args = args[1:]
-	}
-
 	// Guard clause: Ensure there is actually an agent command to isolate
 	if len(args) == 0 {
 		flag.Usage()
 		os.Exit(1)
 	}
 
-	agentCmd := args
-
 	fmt.Println("==================================================")
-	fmt.Println("🛡️  NEURABOX SECURE EXECUTION PROXY INITIATED")
-	fmt.Printf("🎯 Target Agent: %s\n", strings.Join(agentCmd, " "))
+	fmt.Println("  NEURABOX SECURE EXECUTION PROXY INITIATED")
+	fmt.Printf(" Target Agent: %s\n", strings.Join(args, " "))
 	fmt.Println("==================================================")
 
 	// 4. Hand off execution control directly to the interactive proxy runtime
-	session.RunProxySession(agentCmd, *hardenedMode)
+	session.RunProxySession(args, *hardenedMode)
 }
