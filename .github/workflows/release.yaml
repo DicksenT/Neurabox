@@ -1,0 +1,87 @@
+name: Build Binaries
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: ./internal
+
+    strategy:
+      matrix:
+        include:
+          # Windows
+          - os: windows-latest
+            output_name: neurabox_context.exe
+            asset_name: neurabox-windows.exe
+          # Linux x64
+          - os: ubuntu-latest
+            output_name: neurabox_context
+            asset_name: neurabox-linux
+          # Linux ARM64
+          - os: ubuntu-latest
+            output_name: neurabox_context
+            asset_name: neurabox-linux-arm64
+            arch: arm64
+          # macOS x64
+          - os: macos-latest
+            output_name: neurabox_context
+            asset_name: neurabox-macos
+          # macOS ARM64
+          - os: macos-latest
+            output_name: neurabox_context
+            asset_name: neurabox-macos-arm64
+            arch: arm64
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv pip install -e . --system
+
+      - name: Install PyInstaller
+        run: uv pip install pyinstaller --system
+
+      - name: Build Binary (Windows)
+        if: matrix.os == 'windows-latest'
+        run: uv run pyinstaller --onefile --name neurabox_context --add-data "neuragraph;neuragraph" --clean --noupx neuragraph_ast.py
+
+      - name: Build Binary (Linux & macOS)
+        if: matrix.os != 'windows-latest'
+        run: uv run pyinstaller --onefile --name neurabox_context --add-data "neuragraph:neuragraph" --clean --noupx neuragraph_ast.py
+
+      - name: Rename Binary
+        run: |
+          if [ "${{ matrix.os }}" == "windows-latest" ]; then
+            mv internal/dist/neurabox_context.exe internal/dist/${{ matrix.asset_name }}
+          else
+            mv internal/dist/neurabox_context internal/dist/${{ matrix.asset_name }}
+          fi
+        shell: bash
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: internal/dist/${{ matrix.asset_name }}
+          if-no-files-found: error
