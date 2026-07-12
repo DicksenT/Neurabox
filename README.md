@@ -1,12 +1,3 @@
-Yes, you're absolutely right — the README is a bit **overwhelming** for an early‑stage project. You want people to understand the core value quickly, not drown in features.
-
-Here's a **minimalized version** that focuses on what matters: the problem, the solution, and how to get started. Everything else can live in a `docs/` folder or be discovered later.
-
----
-
-## 🪨 Minimalist README
-
-```markdown
 # NeuraBox
 
 **An airlock for AI-generated code.**
