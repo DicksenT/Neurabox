@@ -10,7 +10,8 @@ jobs:
     name: Publish to npm
     runs-on: ubuntu-latest
     permissions:
-      id-token: write   # ← Required for OIDC
+      id-token: write   # Required for trusted publishing
+      contents: read
 
     steps:
       - name: Checkout Code
@@ -25,5 +26,6 @@ jobs:
       - name: Publish to npm
         run: |
           cd npm
-          npm publish --provenance --access public
-        # No NODE_AUTH_TOKEN needed — uses OIDC
+          npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
