@@ -52,7 +52,7 @@ jobs:
 
       - name: Build Binary
         run: |
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="-s -w" -o ${{ matrix.asset_name }} .
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="-s -w" -o ${{ matrix.asset_name }} cmd/nb/main.go
         shell: bash
 
       - name: Upload Artifact
