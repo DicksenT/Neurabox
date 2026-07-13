@@ -10,62 +10,47 @@ jobs:
   build:
     name: Build on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: ./internal
-
     strategy:
       matrix:
         include:
           - os: windows-latest
+            goos: windows
+            goarch: amd64
             asset_name: neurabox-windows.exe
           - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
             asset_name: neurabox-linux
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            asset_name: neurabox-linux-arm64
           - os: macos-latest
+            goos: darwin
+            goarch: amd64
             asset_name: neurabox-macos
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            asset_name: neurabox-macos-arm64
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          python-version: '3.11'
+          go-version: '1.21'
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          version: "latest"
-          enable-cache: true
-
-      - name: Install dependencies
-        run: uv pip install -e . --system
-
-      - name: Install PyInstaller
-        run: uv pip install pyinstaller --system
-
-      - name: Build Binary (Windows)
-        if: matrix.os == 'windows-latest'
-        run: uv run pyinstaller --onefile --name neurabox_context --add-data "neuragraph;neuragraph" --clean --noupx neuragraph_ast.py
-
-      - name: Build Binary (Linux & macOS)
-        if: matrix.os != 'windows-latest'
-        run: uv run pyinstaller --onefile --name neurabox_context --add-data "neuragraph:neuragraph" --clean --noupx neuragraph_ast.py
-
-      - name: Rename Binary
+      - name: Build Binary
         run: |
-          if [ "${{ matrix.os }}" == "windows-latest" ]; then
-            mv internal/dist/neurabox_context.exe internal/dist/${{ matrix.asset_name }}
-          else
-            mv internal/dist/neurabox_context internal/dist/${{ matrix.asset_name }}
-          fi
-        shell: bash
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="-s -w" -o ${{ matrix.asset_name }} ./cmd/neurabox
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v1
         with:
-          files: internal/dist/${{ matrix.asset_name }}
+          files: ${{ matrix.asset_name }}
           draft: false
           prerelease: false
         env:
