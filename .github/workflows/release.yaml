@@ -1,10 +1,9 @@
-name: Build Binaries
+name: Create Release
 
 on:
   push:
-    branches: [main, master]
-  pull_request:
-    branches: [main, master]
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 jobs:
@@ -18,28 +17,12 @@ jobs:
     strategy:
       matrix:
         include:
-          # Windows
           - os: windows-latest
-            output_name: neurabox_context.exe
             asset_name: neurabox-windows.exe
-          # Linux x64
           - os: ubuntu-latest
-            output_name: neurabox_context
             asset_name: neurabox-linux
-          # Linux ARM64
-          - os: ubuntu-latest
-            output_name: neurabox_context
-            asset_name: neurabox-linux-arm64
-            arch: arm64
-          # macOS x64
           - os: macos-latest
-            output_name: neurabox_context
             asset_name: neurabox-macos
-          # macOS ARM64
-          - os: macos-latest
-            output_name: neurabox_context
-            asset_name: neurabox-macos-arm64
-            arch: arm64
 
     steps:
       - name: Checkout Code
@@ -79,9 +62,11 @@ jobs:
           fi
         shell: bash
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v1
         with:
-          name: ${{ matrix.asset_name }}
-          path: internal/dist/${{ matrix.asset_name }}
-          if-no-files-found: error
+          files: internal/dist/${{ matrix.asset_name }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
